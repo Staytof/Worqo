@@ -1,0 +1,1396 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+:root {
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  --font-sans: "Nunito", "Segoe UI", Arial, sans-serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  font-family: "Nunito", "Segoe UI", Arial, sans-serif;
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: "Nunito", "Segoe UI", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--background);
+  color: var(--foreground);
+  color-scheme: light;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+button,
+input,
+textarea,
+select,
+option,
+dialog {
+  font-family: "Nunito", "Segoe UI", Arial, sans-serif;
+}
+
+#root,
+#root *,
+.font-sans,
+[class*="font-"],
+button,
+input,
+textarea,
+select,
+option {
+  font-family: "Nunito", "Segoe UI", Arial, sans-serif !important;
+}
+
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.custom-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.pac-container {
+  z-index: 80 !important;
+  position: fixed !important;
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%);
+  margin-top: 10px;
+  box-sizing: border-box;
+  width: min(28rem, calc(100vw - var(--safe-area-inset-left) - var(--safe-area-inset-right) - 2rem)) !important;
+  max-width: calc(100vw - var(--safe-area-inset-left) - var(--safe-area-inset-right) - 2rem) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  background: rgba(2, 6, 23, 0.96);
+  box-shadow: 0 28px 70px rgba(2, 6, 23, 0.48);
+  backdrop-filter: blur(24px);
+  overflow: hidden;
+  font-family: "Nunito", "Segoe UI", sans-serif;
+}
+
+.pac-container::after,
+.pac-logo::after {
+  display: none !important;
+  height: 0 !important;
+  background-image: none !important;
+}
+
+.pac-item {
+  min-height: 52px;
+  padding: 12px 16px;
+  border-top: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  line-height: 1.4;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.pac-item:first-child {
+  border-top: 0;
+}
+
+.pac-item:hover,
+.pac-item-selected {
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.pac-item,
+.pac-item span {
+  color: rgba(255, 255, 255, 0.66);
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+}
+
+.pac-item-query,
+.pac-item-query span {
+  color: #f8fafc;
+  font-weight: 600;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+}
+
+.pac-matched {
+  color: #7dd3fc;
+}
+
+.pac-icon {
+  opacity: 0.88;
+  filter: brightness(0) saturate(100%) invert(77%) sepia(35%) saturate(1770%)
+    hue-rotate(164deg) brightness(102%) contrast(98%);
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@layer components {
+  .worqo-page {
+    background: #f8fbff;
+  }
+
+  .login-screen-surface {
+    background: #ffffff;
+  }
+
+  .brand-splash-surface {
+    background: #0153dd;
+  }
+
+  .worqo-section {
+    position: relative;
+    min-width: 0;
+    padding-block: 1.25rem;
+    border-top: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .worqo-section::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: 0;
+    width: min(5.5rem, 28%);
+    height: 2px;
+    border-radius: 999px;
+    background: #2563eb;
+  }
+
+  .worqo-section:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .worqo-section:first-child::before {
+    display: none;
+  }
+
+  .worqo-flat-panel {
+    min-width: 0;
+    border: 1px solid rgba(37, 99, 235, 0.12);
+    border-radius: 1.25rem;
+    background: rgba(248, 250, 252, 0.78);
+    box-shadow: none;
+    overflow-wrap: anywhere;
+  }
+
+  .worqo-flat-panel--blue {
+    border-color: rgba(37, 99, 235, 0.18);
+    background: rgba(239, 246, 255, 0.82);
+  }
+
+  .worqo-flat-panel--amber {
+    border-color: rgba(245, 158, 11, 0.22);
+    background: rgba(255, 251, 235, 0.88);
+  }
+
+  .worqo-flat-panel--emerald {
+    border-color: rgba(16, 185, 129, 0.2);
+    background: rgba(236, 253, 245, 0.88);
+  }
+
+  .worqo-flat-panel--rose {
+    border-color: rgba(244, 63, 94, 0.2);
+    background: rgba(255, 241, 242, 0.9);
+  }
+
+  .worqo-divider-list > * + * {
+    border-top: 0;
+  }
+
+  .worqo-list-row {
+    min-width: 0;
+    padding-block: 1rem;
+    overflow-wrap: anywhere;
+  }
+
+  .worqo-fullscreen-sheet {
+    position: fixed;
+    inset: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: rgba(15, 23, 42, 0.24);
+    backdrop-filter: blur(16px);
+  }
+
+  .worqo-fullscreen-panel {
+    min-height: 100dvh;
+    width: 100%;
+    background: #f8fbff;
+  }
+
+  .worqo-fullscreen-content {
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: calc(1rem + var(--safe-area-inset-top)) 1rem
+      calc(2rem + var(--safe-area-inset-bottom));
+  }
+
+  .worqo-fullscreen-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    margin: calc(-1rem - var(--safe-area-inset-top)) -1rem 0;
+    padding: calc(1rem + var(--safe-area-inset-top)) 1rem 1rem;
+    border-bottom: 0;
+    background: rgba(248, 250, 252, 0.96);
+    backdrop-filter: blur(16px);
+  }
+
+  .worqo-fullscreen-footer {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -1rem calc(-2rem - var(--safe-area-inset-bottom));
+    padding: 1rem 1rem calc(1rem + var(--safe-area-inset-bottom));
+    border-top: 0;
+    background: rgba(248, 250, 252, 0.96);
+    backdrop-filter: blur(16px);
+  }
+
+  @media (min-width: 640px) {
+    .worqo-fullscreen-content {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+
+    .worqo-fullscreen-header {
+      margin-left: -1.5rem;
+      margin-right: -1.5rem;
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+
+    .worqo-fullscreen-footer {
+      margin-left: -1.5rem;
+      margin-right: -1.5rem;
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+}
+
+.worko-native-app {
+  --worko-native-bg: #fafafa;
+  --worko-native-surface: #ffffff;
+  --worko-native-surface-raised: #ffffff;
+  --worko-native-surface-muted: #f5f5f5;
+  --worko-native-line: rgba(23, 23, 23, 0.08);
+  --worko-native-line-strong: rgba(23, 23, 23, 0.13);
+  --worko-native-text: #171717;
+  --worko-native-text-soft: #525252;
+  --worko-native-text-muted: #a3a3a3;
+  --worko-native-blue: #2563eb;
+  --worko-native-blue-soft: #eff6ff;
+  --worko-native-shadow-sm: 0 1px 2px rgba(23, 23, 23, 0.06);
+  --worko-native-shadow-md: 0 8px 24px rgba(23, 23, 23, 0.08);
+  --worko-native-shadow-lg: 0 16px 42px rgba(23, 23, 23, 0.12);
+  --worko-native-card-shadow: 0 1px 2px rgba(23, 23, 23, 0.06);
+  --worko-native-modal-shadow: 0 16px 42px rgba(23, 23, 23, 0.14);
+  background: var(--worko-native-bg);
+  color: var(--worko-native-text);
+}
+
+.worko-native-app *,
+.worko-native-app *::before,
+.worko-native-app *::after {
+  letter-spacing: 0;
+  text-shadow: none !important;
+}
+
+.worko-native-app *:not(.gm-style):not(.gm-style *),
+.worko-native-app *:not(.gm-style):not(.gm-style *)::before,
+.worko-native-app *:not(.gm-style):not(.gm-style *)::after {
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.worko-native-app [class*="drop-shadow"],
+.worko-native-app [style*="drop-shadow"],
+.worko-native-app [class*="blur-"]:not(.gm-style):not(.gm-style *) {
+  filter: none !important;
+}
+
+.worko-native-app .chat-search-shell {
+  border-color: #e5e7eb !important;
+  background-color: #ffffff !important;
+}
+
+.worko-native-app .chat-search-input,
+.worko-native-app .chat-search-input:focus,
+.worko-native-app input.chat-search-input:not([type="checkbox"]):not([type="radio"]),
+.worko-native-app input.chat-search-input:not([type="checkbox"]):not([type="radio"]):focus {
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.worko-native-app .chat-message-input,
+.worko-native-app .chat-message-input:focus,
+.worko-native-app input.chat-message-input:not([type="checkbox"]):not([type="radio"]),
+.worko-native-app input.chat-message-input:not([type="checkbox"]):not([type="radio"]):focus {
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.worko-native-app .profile-progress-card,
+.worko-native-app .profile-soft-card {
+  border-color: #e5e7eb !important;
+  background-color: #ffffff !important;
+}
+
+.worko-native-app .profile-progress-card {
+  box-shadow: none !important;
+}
+
+.worko-native-app .profile-soft-card .worqo-list-row + .worqo-list-row {
+  border-top: 1px solid #f0f0f0 !important;
+}
+
+@keyframes worko-megaphone-shout {
+  0%,
+  88%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+
+  90% {
+    transform: rotate(-8deg) scale(1.08);
+  }
+
+  92% {
+    transform: rotate(7deg) scale(1.12);
+  }
+
+  94% {
+    transform: rotate(-5deg) scale(1.08);
+  }
+
+  96% {
+    transform: rotate(3deg) scale(1.04);
+  }
+}
+
+.map-megaphone-icon {
+  transform-origin: 35% 55%;
+  animation: worko-megaphone-shout 5s ease-in-out infinite;
+}
+
+@keyframes worko-search-pulse {
+  0%,
+  82%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  86% {
+    opacity: 0.78;
+    transform: scale(1.12);
+  }
+
+  90% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  94% {
+    opacity: 0.78;
+    transform: scale(1.12);
+  }
+}
+
+.map-search-icon {
+  transform-origin: 50% 50%;
+  animation: worko-search-pulse 5s ease-in-out infinite;
+}
+
+.worko-native-app [class*="tracking-"] {
+  letter-spacing: 0.08em !important;
+}
+
+.worko-native-app [class*="bg-gradient"],
+.worko-native-app [style*="gradient"] {
+  background-image: none !important;
+}
+
+.worko-native-app [class*="blur-3xl"],
+.worko-native-app [class*="mix-blend"] {
+  display: none !important;
+}
+
+.worko-native-app .worqo-page,
+.worko-native-app .bg-slate-50 {
+  background-color: var(--worko-native-bg) !important;
+}
+
+.worko-native-app .text-slate-900,
+.worko-native-app .text-slate-800 {
+  color: var(--worko-native-text) !important;
+}
+
+.worko-native-app .text-slate-700,
+.worko-native-app .text-slate-600 {
+  color: var(--worko-native-text-soft) !important;
+}
+
+.worko-native-app .text-slate-500,
+.worko-native-app .text-slate-400 {
+  color: var(--worko-native-text-muted) !important;
+}
+
+.worko-native-app .text-blue-500,
+.worko-native-app .text-blue-600,
+.worko-native-app .text-blue-700 {
+  color: var(--worko-native-blue) !important;
+}
+
+.worko-native-app .bg-blue-600,
+.worko-native-app .hover\:bg-blue-700:hover {
+  background-color: var(--worko-native-blue) !important;
+}
+
+.worko-native-app .bg-blue-50,
+.worko-native-app .hover\:bg-blue-50:hover {
+  background-color: var(--worko-native-blue-soft) !important;
+}
+
+.worko-native-app .worqo-section {
+  padding-block: 1rem;
+  border-top: 0;
+}
+
+.worko-native-app .worqo-section::before {
+  display: none;
+}
+
+.worko-native-app .worqo-flat-panel {
+  border: 0 !important;
+  border-radius: 24px !important;
+  background: var(--worko-native-surface-raised) !important;
+  box-shadow: var(--worko-native-shadow-sm) !important;
+}
+
+.worko-native-app .worqo-flat-panel--blue,
+.worko-native-app .worqo-flat-panel--amber,
+.worko-native-app .worqo-flat-panel--emerald,
+.worko-native-app .worqo-flat-panel--rose {
+  border: 0 !important;
+}
+
+.worko-native-app .worqo-flat-panel--blue {
+  background: #edf5ff !important;
+}
+
+.worko-native-app .worqo-flat-panel--amber {
+  background: #fff7e6 !important;
+}
+
+.worko-native-app .worqo-flat-panel--emerald {
+  background: #eafaf2 !important;
+}
+
+.worko-native-app .worqo-flat-panel--rose {
+  background: #fff0f3 !important;
+}
+
+.worko-native-app .worqo-list-row {
+  padding-block: 0.95rem;
+}
+
+.worko-native-app .worqo-divider-list > * + * {
+  border-top: 1px solid var(--worko-native-line);
+}
+
+.worko-native-app .app-top-bar {
+  background: #ffffff !important;
+  box-shadow: none !important;
+  border-bottom-color: var(--worko-native-line) !important;
+}
+
+.worko-native-app .app-tab-bar {
+  border-top: 1px solid var(--worko-native-line);
+  border-radius: 0;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.worko-native-app .app-tab-bar.bg-slate-950\/\[0\.72\] {
+  border-top-color: var(--worko-native-line);
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.worko-native-app .app-tour-card,
+.worko-native-app .app-toast-card {
+  border: 0 !important;
+  background: rgba(255, 255, 255, 0.98) !important;
+  box-shadow: var(--worko-native-shadow-lg) !important;
+}
+
+.worko-native-app .rounded-\[30px\],
+.worko-native-app .rounded-\[28px\],
+.worko-native-app .rounded-\[26px\],
+.worko-native-app .rounded-\[24px\],
+.worko-native-app .rounded-2xl {
+  border-radius: 22px !important;
+}
+
+.worko-native-app .rounded-\[2rem\] {
+  border-radius: 26px !important;
+}
+
+.worko-native-app .rounded-xl {
+  border-radius: 16px !important;
+}
+
+.worko-native-app .border,
+.worko-native-app .border-slate-100,
+.worko-native-app .border-slate-200,
+.worko-native-app .border-slate-300,
+.worko-native-app .border-blue-100,
+.worko-native-app .border-blue-200 {
+  border-color: var(--worko-native-line) !important;
+}
+
+.worko-native-app [class*="border"][class*="bg-white"],
+.worko-native-app [class*="border"][class*="bg-slate-50"] {
+  box-shadow: var(--worko-native-shadow-sm) !important;
+}
+
+.worko-native-app input:not([type="checkbox"]):not([type="radio"]),
+.worko-native-app textarea,
+.worko-native-app select {
+  border-color: transparent !important;
+  border-radius: 16px !important;
+  background-color: var(--worko-native-surface-muted) !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+.worko-native-app input:not([type="checkbox"]):not([type="radio"]):focus,
+.worko-native-app textarea:focus,
+.worko-native-app select:focus {
+  background-color: #ffffff !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(10, 99, 255, 0.28),
+    0 0 0 4px rgba(10, 99, 255, 0.08);
+}
+
+.worko-native-app button,
+.worko-native-app a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.worko-native-app button[class*="bg-blue-600"],
+.worko-native-app a[class*="bg-blue-600"] {
+  border: 0 !important;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.22) !important;
+}
+
+.worko-native-app button[class*="border"][class*="bg-white"],
+.worko-native-app a[class*="border"][class*="bg-white"] {
+  background: var(--worko-native-surface) !important;
+  box-shadow: var(--worko-native-shadow-sm) !important;
+}
+
+.worko-native-app .worqo-fullscreen-panel,
+.worko-native-app .worqo-fullscreen-content {
+  background: var(--worko-native-bg) !important;
+}
+
+.worko-native-app .worqo-fullscreen-header,
+.worko-native-app .worqo-fullscreen-footer {
+  border-color: var(--worko-native-line) !important;
+  background: rgba(245, 246, 248, 0.94) !important;
+}
+
+.dark .worko-native-app {
+  --worko-native-bg: #081426;
+  --worko-native-surface: #0f1e34;
+  --worko-native-surface-raised: #12233c;
+  --worko-native-surface-muted: #172a45;
+  --worko-native-line: rgba(148, 163, 184, 0.14);
+  --worko-native-line-strong: rgba(148, 163, 184, 0.22);
+  --worko-native-text: #f8fbff;
+  --worko-native-text-soft: #cbd7e8;
+  --worko-native-text-muted: #8fa1ba;
+  --worko-native-blue: #66a4ff;
+  --worko-native-blue-soft: rgba(102, 164, 255, 0.14);
+  --worko-native-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --worko-native-shadow-md: 0 12px 32px rgba(0, 0, 0, 0.26);
+  --worko-native-shadow-lg: 0 24px 58px rgba(0, 0, 0, 0.36);
+}
+
+.dark .worko-native-app .app-top-bar,
+.dark .worko-native-app .app-tab-bar,
+.dark .worko-native-app .app-tour-card,
+.dark .worko-native-app .app-toast-card {
+  background-color: rgba(8, 20, 38, 0.94) !important;
+}
+
+.dark .worko-native-app input:not([type="checkbox"]):not([type="radio"]),
+.dark .worko-native-app textarea,
+.dark .worko-native-app select {
+  background-color: var(--worko-native-surface-muted) !important;
+  color: var(--worko-native-text) !important;
+}
+
+.dark {
+  --worqo-dark-bg: #081426;
+  --worqo-dark-bg-elevated: #0b1a33;
+  --worqo-dark-surface: rgba(12, 27, 52, 0.94);
+  --worqo-dark-surface-soft: rgba(15, 33, 61, 0.88);
+  --worqo-dark-surface-muted: rgba(21, 44, 78, 0.84);
+  --worqo-dark-border: rgba(125, 166, 230, 0.18);
+  --worqo-dark-border-strong: rgba(125, 166, 230, 0.3);
+  --worqo-dark-text: #edf4ff;
+  --worqo-dark-text-soft: #d5e3fb;
+  --worqo-dark-text-muted: #9cb1d1;
+  --worqo-dark-text-faint: #7188ab;
+}
+
+.dark body {
+  background: #081426;
+}
+
+.dark .worqo-page,
+.dark .auth-layout-shell {
+  background: #081426;
+}
+
+.dark .login-screen-surface {
+  background: #081426;
+}
+
+.dark .brand-splash-surface {
+  background: #0153dd;
+}
+
+.dark .worqo-section {
+  border-top-color: rgba(125, 166, 230, 0.18);
+}
+
+.dark .worqo-section::before {
+  background: #60a5fa;
+}
+
+.dark .worqo-flat-panel {
+  border-color: var(--worqo-dark-border);
+  background: rgba(13, 29, 56, 0.82);
+}
+
+.dark .worqo-flat-panel--blue {
+  border-color: rgba(96, 165, 250, 0.26);
+  background: rgba(29, 78, 216, 0.16);
+}
+
+.dark .worqo-flat-panel--amber {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(120, 53, 15, 0.26);
+}
+
+.dark .worqo-flat-panel--emerald {
+  border-color: rgba(52, 211, 153, 0.26);
+  background: rgba(6, 95, 70, 0.24);
+}
+
+.dark .worqo-flat-panel--rose {
+  border-color: rgba(251, 113, 133, 0.26);
+  background: rgba(136, 19, 55, 0.24);
+}
+
+.dark .worqo-divider-list > * + * {
+  border-top-color: rgba(125, 166, 230, 0.16);
+}
+
+.dark .worqo-fullscreen-sheet {
+  background: rgba(6, 14, 28, 0.62);
+}
+
+.dark .worqo-fullscreen-panel {
+  background: #081426;
+}
+
+.dark .worqo-fullscreen-header {
+  border-bottom-color: var(--worqo-dark-border);
+  background: rgba(8, 20, 38, 0.96);
+}
+
+.dark .worqo-fullscreen-footer {
+  border-top-color: var(--worqo-dark-border);
+  background: rgba(8, 20, 38, 0.96);
+}
+
+.dark .home-map-preserve-theme.bg-slate-950,
+.dark .home-map-preserve-theme .bg-slate-950,
+.dark .home-map-preserve-theme [class*="bg-slate-950/"] {
+  background-color: revert !important;
+}
+
+.dark .home-map-preserve-theme .border-white,
+.dark .home-map-preserve-theme [class*="border-white/"] {
+  border-color: revert !important;
+}
+
+.dark .bg-white,
+.dark [class*="bg-white/"] {
+  background-color: var(--worqo-dark-surface) !important;
+}
+
+.dark .bg-slate-50 {
+  background-color: var(--worqo-dark-surface-soft) !important;
+}
+
+.dark .bg-slate-100 {
+  background-color: var(--worqo-dark-surface-muted) !important;
+}
+
+.dark .bg-slate-200,
+.dark .bg-slate-300 {
+  background-color: rgba(34, 58, 94, 0.92) !important;
+}
+
+.dark .bg-slate-950,
+.dark [class*="bg-slate-950/"] {
+  background-color: rgba(8, 20, 38, 0.88) !important;
+}
+
+.dark .border-white,
+.dark [class*="border-white/"] {
+  border-color: rgba(148, 163, 184, 0.18) !important;
+}
+
+.dark .border-slate-100 {
+  border-color: rgba(73, 96, 132, 0.42) !important;
+}
+
+.dark .border-slate-200 {
+  border-color: rgba(92, 118, 156, 0.42) !important;
+}
+
+.dark .border-slate-300 {
+  border-color: rgba(110, 138, 178, 0.46) !important;
+}
+
+.dark .border-blue-100 {
+  border-color: rgba(96, 165, 250, 0.24) !important;
+}
+
+.dark .border-blue-200 {
+  border-color: rgba(96, 165, 250, 0.34) !important;
+}
+
+.dark .border-emerald-200 {
+  border-color: rgba(52, 211, 153, 0.3) !important;
+}
+
+.dark .border-amber-200 {
+  border-color: rgba(251, 191, 36, 0.32) !important;
+}
+
+.dark .border-rose-200,
+.dark .border-rose-300 {
+  border-color: rgba(251, 113, 133, 0.34) !important;
+}
+
+.dark .bg-blue-50 {
+  background-color: rgba(29, 78, 216, 0.18) !important;
+}
+
+.dark .bg-emerald-50 {
+  background-color: rgba(6, 95, 70, 0.22) !important;
+}
+
+.dark .bg-amber-50,
+.dark .bg-amber-100 {
+  background-color: rgba(120, 53, 15, 0.24) !important;
+}
+
+.dark .bg-rose-50 {
+  background-color: rgba(136, 19, 55, 0.22) !important;
+}
+
+.dark .text-slate-900 {
+  color: var(--worqo-dark-text) !important;
+}
+
+.dark .text-slate-800,
+.dark .text-slate-700 {
+  color: var(--worqo-dark-text-soft) !important;
+}
+
+.dark .text-slate-600,
+.dark .text-slate-500 {
+  color: var(--worqo-dark-text-muted) !important;
+}
+
+.dark .text-slate-400,
+.dark .text-slate-300 {
+  color: var(--worqo-dark-text-faint) !important;
+}
+
+.dark .text-blue-500,
+.dark .text-blue-600,
+.dark .text-blue-700,
+.dark .text-blue-900 {
+  color: #90c2ff !important;
+}
+
+.dark .text-emerald-700,
+.dark .text-emerald-900 {
+  color: #72e0ba !important;
+}
+
+.dark .text-amber-700,
+.dark .text-amber-800,
+.dark .text-amber-900 {
+  color: #f8d56b !important;
+}
+
+.dark .text-rose-600,
+.dark .text-rose-700,
+.dark .text-rose-900 {
+  color: #f5a0b4 !important;
+}
+
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark textarea,
+.dark select {
+  color: var(--worqo-dark-text) !important;
+  caret-color: #90c2ff;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--worqo-dark-text-faint) !important;
+}
+
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-slate-200:hover {
+  background-color: var(--worqo-dark-surface-muted) !important;
+}
+
+.dark .hover\:bg-blue-50:hover {
+  background-color: rgba(29, 78, 216, 0.22) !important;
+}
+
+.dark .hover\:bg-emerald-50:hover {
+  background-color: rgba(6, 95, 70, 0.28) !important;
+}
+
+.dark .hover\:bg-rose-50:hover,
+.dark .hover\:bg-rose-100:hover {
+  background-color: rgba(136, 19, 55, 0.28) !important;
+}
+
+.dark .hover\:text-slate-600:hover,
+.dark .hover\:text-slate-700:hover,
+.dark .hover\:text-slate-900:hover {
+  color: var(--worqo-dark-text) !important;
+}
+
+.dark .hover\:text-blue-700:hover {
+  color: #bfdbfe !important;
+}
+
+.dark .hover\:border-blue-200:hover {
+  border-color: rgba(147, 197, 253, 0.42) !important;
+}
+
+.dark .hover\:border-slate-300:hover {
+  border-color: rgba(125, 166, 230, 0.3) !important;
+}
+
+.dark .hover\:border-rose-200:hover {
+  border-color: rgba(251, 113, 133, 0.42) !important;
+}
+
+.dark .focus\:bg-white:focus {
+  background-color: var(--worqo-dark-surface) !important;
+}
+
+.dark .focus\:border-blue-500:focus {
+  border-color: rgba(96, 165, 250, 0.64) !important;
+}
+
+/* Native app polish: prefer surfaces, depth and icons over outlined web cards. */
+.worko-native-app {
+  --worko-native-card-shadow: 0 12px 34px rgba(15, 23, 42, 0.1);
+  --worko-native-modal-shadow: 0 28px 80px rgba(15, 23, 42, 0.2);
+}
+
+.worko-native-app .border:not(.border-dashed):not(.border-2),
+.worko-native-app [class*="border-slate-"]:not(.border-dashed):not(.border-2),
+.worko-native-app [class*="border-blue-"]:not(.border-dashed):not(.border-2),
+.worko-native-app [class*="border-emerald-"]:not(.border-dashed):not(.border-2),
+.worko-native-app [class*="border-amber-"]:not(.border-dashed):not(.border-2),
+.worko-native-app [class*="border-rose-"]:not(.border-dashed):not(.border-2),
+.worko-native-app [class*="border-violet-"]:not(.border-dashed):not(.border-2) {
+  border-color: transparent !important;
+}
+
+.worko-native-app .border-dashed {
+  border-color: rgba(123, 135, 148, 0.26) !important;
+}
+
+.worko-native-app .bg-white,
+.worko-native-app [class*="bg-white/"],
+.worko-native-app .bg-slate-50,
+.worko-native-app .bg-slate-100 {
+  background-color: var(--worko-native-surface) !important;
+}
+
+.worko-native-app .bg-slate-100,
+.worko-native-app .bg-slate-200,
+.worko-native-app .hover\:bg-slate-100:hover,
+.worko-native-app .hover\:bg-slate-200:hover {
+  background-color: var(--worko-native-surface-muted) !important;
+}
+
+.worko-native-app section[class*="bg-white"],
+.worko-native-app article[class*="bg-white"],
+.worko-native-app div[class*="bg-white"][class*="rounded"],
+.worko-native-app div[class*="bg-slate-50"][class*="rounded"],
+.worko-native-app .worqo-flat-panel {
+  box-shadow: var(--worko-native-card-shadow) !important;
+}
+
+.worko-native-app [role="dialog"],
+.worko-native-app [class*="shadow-2xl"],
+.worko-native-app [class*="shadow-xl"],
+.worko-native-app .worqo-fullscreen-panel,
+.worko-native-app .app-tour-card,
+.worko-native-app .app-toast-card {
+  box-shadow: var(--worko-native-modal-shadow) !important;
+}
+
+.worko-native-app .app-top-bar,
+.worko-native-app .app-tab-bar {
+  border-color: transparent !important;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06) !important;
+}
+
+.worko-native-app .app-tab-bar {
+  box-shadow: 0 -10px 28px rgba(15, 23, 42, 0.08) !important;
+}
+
+.worko-native-app .app-tab-bar button {
+  border-radius: 18px !important;
+}
+
+.worko-native-app .app-tab-bar button svg {
+  filter: drop-shadow(0 5px 10px rgba(15, 23, 42, 0.08));
+}
+
+.worko-native-app button svg,
+.worko-native-app a svg,
+.worko-native-app h1 svg,
+.worko-native-app h2 svg,
+.worko-native-app h3 svg {
+  stroke-width: 2.2;
+}
+
+.worko-native-app .worqo-section > div:first-child > svg,
+.worko-native-app h2 + svg,
+.worko-native-app svg.text-blue-500,
+.worko-native-app svg.text-blue-600,
+.worko-native-app svg.text-slate-400,
+.worko-native-app svg.text-slate-500 {
+  padding: 0.32rem;
+  border-radius: 999px;
+  background-color: var(--worko-native-blue-soft);
+  box-sizing: content-box;
+  color: var(--worko-native-blue) !important;
+}
+
+.worko-native-app span[class*="rounded-full"][class*="border"],
+.worko-native-app span[class*="rounded-full"][class*="bg-"] {
+  border-color: transparent !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.03);
+}
+
+.worko-native-app input:not([type="checkbox"]):not([type="radio"]),
+.worko-native-app textarea,
+.worko-native-app select,
+.worko-native-app [class*="bg-slate-50"] input {
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.035) !important;
+}
+
+.worko-native-app button[class*="border"],
+.worko-native-app a[class*="border"] {
+  border-color: transparent !important;
+}
+
+.worko-native-app button[class*="border"]:not([class*="bg-blue-600"]),
+.worko-native-app a[class*="border"]:not([class*="bg-blue-600"]) {
+  background-color: var(--worko-native-surface) !important;
+}
+
+.worko-native-app .shadow-sm,
+.worko-native-app .shadow-md {
+  box-shadow: var(--worko-native-card-shadow) !important;
+}
+
+.worko-native-app .shadow-none {
+  box-shadow: none !important;
+}
+
+.dark .worko-native-app {
+  --worko-native-card-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  --worko-native-modal-shadow: 0 30px 86px rgba(0, 0, 0, 0.46);
+}
+
+.dark .worko-native-app .bg-white,
+.dark .worko-native-app [class*="bg-white/"],
+.dark .worko-native-app .bg-slate-50,
+.dark .worko-native-app .bg-slate-100 {
+  background-color: var(--worko-native-surface) !important;
+}
+
+.dark .worko-native-app .bg-slate-100,
+.dark .worko-native-app .bg-slate-200,
+.dark .worko-native-app .hover\:bg-slate-100:hover,
+.dark .worko-native-app .hover\:bg-slate-200:hover {
+  background-color: var(--worko-native-surface-muted) !important;
+}
+
+/* The map uses a deliberate dark control system over Google Maps. Keep it isolated
+   from the global native skin so day mode does not wash out controls. */
+.worko-native-app .home-map-preserve-theme {
+  background-color: #020617 !important;
+  color: #ffffff;
+}
+
+.worko-native-app .home-map-preserve-theme .bg-slate-950,
+.worko-native-app .home-map-preserve-theme [class*="bg-slate-950/"],
+.worko-native-app .home-map-preserve-theme button[class*="bg-slate-950"] {
+  background-color: rgba(2, 6, 23, 0.82) !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+}
+
+.worko-native-app .home-map-preserve-theme .hover\:bg-slate-950:hover,
+.worko-native-app .home-map-preserve-theme [class*="hover:bg-slate-950"]:hover {
+  background-color: rgba(2, 6, 23, 0.94) !important;
+}
+
+.worko-native-app .home-map-preserve-theme .bg-sky-500,
+.worko-native-app .home-map-preserve-theme button[class*="bg-sky-500"] {
+  background-color: #0ea5e9 !important;
+  color: #ffffff !important;
+}
+
+.worko-native-app .home-map-preserve-theme .bg-red-500,
+.worko-native-app .home-map-preserve-theme button[class*="bg-red-500"] {
+  background-color: #ef4444 !important;
+  color: #ffffff !important;
+}
+
+.worko-native-app .home-map-preserve-theme .bg-yellow-400,
+.worko-native-app .home-map-preserve-theme button[class*="bg-yellow-400"] {
+  background-color: #facc15 !important;
+  color: #020617 !important;
+}
+
+.worko-native-app .home-map-preserve-theme .bg-emerald-500,
+.worko-native-app .home-map-preserve-theme button[class*="bg-emerald-500"] {
+  background-color: #10b981 !important;
+  color: #ffffff !important;
+}
+
+.worko-native-app .home-map-preserve-theme [class*="bg-white/"] {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.worko-native-app .home-map-preserve-theme .bg-white {
+  background-color: #ffffff !important;
+}
+
+.worko-native-app .home-map-preserve-theme .text-white,
+.worko-native-app .home-map-preserve-theme [class*="text-white/"] {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.worko-native-app .home-map-preserve-theme .text-slate-950 {
+  color: #020617 !important;
+}
+
+.worko-native-app .home-map-preserve-theme .border,
+.worko-native-app .home-map-preserve-theme [class*="border-white/"],
+.worko-native-app .home-map-preserve-theme [class*="border-sky-"],
+.worko-native-app .home-map-preserve-theme [class*="border-red-"],
+.worko-native-app .home-map-preserve-theme [class*="border-yellow-"],
+.worko-native-app .home-map-preserve-theme [class*="border-emerald-"] {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+.worko-native-app .home-map-preserve-theme button {
+  box-shadow: 0 14px 34px rgba(2, 6, 23, 0.24) !important;
+}
+
+.worko-native-app .client-location-preview {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.worko-native-app .client-location-preview .bg-white,
+.worko-native-app .client-location-preview button.bg-white,
+.worko-native-app .client-location-preview div.bg-white {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.worko-native-app .client-location-preview .bg-slate-100,
+.worko-native-app .client-location-preview button.bg-slate-100 {
+  background-color: #f1f5f9 !important;
+}
+
+.worko-native-app .client-location-preview .text-slate-950,
+.worko-native-app .client-location-preview .text-slate-800 {
+  color: #0f172a !important;
+}
+
+.worko-native-app .client-location-preview .text-slate-700,
+.worko-native-app .client-location-preview .text-slate-600 {
+  color: #475569 !important;
+}
+
+.worko-native-app .home-map-preserve-theme button svg {
+  background: transparent !important;
+  padding: 0 !important;
+  color: currentColor !important;
+}
+
+/* Final dark-mode guards for fullscreen modals/sheets. These components are used
+   across map actions, profile subpages and support flows, so keep contrast strict. */
+.dark .worko-native-app .worqo-fullscreen-sheet,
+.worko-native-app.dark .worqo-fullscreen-sheet {
+  background: rgba(2, 6, 23, 0.72) !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-panel,
+.dark .worko-native-app .worqo-fullscreen-content,
+.worko-native-app.dark .worqo-fullscreen-panel,
+.worko-native-app.dark .worqo-fullscreen-content {
+  background: var(--worko-native-bg) !important;
+  color: var(--worko-native-text) !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-header,
+.dark .worko-native-app .worqo-fullscreen-footer,
+.worko-native-app.dark .worqo-fullscreen-header,
+.worko-native-app.dark .worqo-fullscreen-footer {
+  background: rgba(8, 20, 38, 0.96) !important;
+  border-color: transparent !important;
+  color: var(--worko-native-text) !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22) !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-header .text-slate-900,
+.dark .worko-native-app .worqo-fullscreen-header .text-slate-800,
+.dark .worko-native-app .worqo-fullscreen-header .text-slate-700,
+.worko-native-app.dark .worqo-fullscreen-header .text-slate-900,
+.worko-native-app.dark .worqo-fullscreen-header .text-slate-800,
+.worko-native-app.dark .worqo-fullscreen-header .text-slate-700 {
+  color: var(--worko-native-text) !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-header button[class*="bg-white"],
+.worko-native-app.dark .worqo-fullscreen-header button[class*="bg-white"] {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--worko-native-text-soft) !important;
+  box-shadow: none !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-header button[class*="bg-white"]:hover,
+.worko-native-app.dark .worqo-fullscreen-header button[class*="bg-white"]:hover {
+  background: rgba(255, 255, 255, 0.13) !important;
+  color: var(--worko-native-text) !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-panel .text-slate-900,
+.dark .worko-native-app .worqo-fullscreen-panel .text-slate-800,
+.worko-native-app.dark .worqo-fullscreen-panel .text-slate-900,
+.worko-native-app.dark .worqo-fullscreen-panel .text-slate-800 {
+  color: var(--worko-native-text) !important;
+}
+
+.dark .worko-native-app .worqo-fullscreen-panel .text-slate-700,
+.dark .worko-native-app .worqo-fullscreen-panel .text-slate-600,
+.worko-native-app.dark .worqo-fullscreen-panel .text-slate-700,
+.worko-native-app.dark .worqo-fullscreen-panel .text-slate-600 {
+  color: var(--worko-native-text-soft) !important;
+}
+
+/* Request composer has mixed media cards, category chips and a textarea; keep
+   its light/dark contrast explicit instead of relying on broad utility overrides. */
+.worko-native-app .request-composer-sheet {
+  background: #f5f6f8 !important;
+  color: #111827 !important;
+}
+
+.worko-native-app .request-composer-header {
+  background: rgba(245, 246, 248, 0.96) !important;
+  color: #111827 !important;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06) !important;
+}
+
+.worko-native-app .request-composer-header .text-slate-900,
+.worko-native-app .request-composer-header .text-slate-800,
+.worko-native-app .request-composer-header .text-slate-700 {
+  color: #111827 !important;
+}
+
+.worko-native-app .request-composer-header button {
+  background: #ffffff !important;
+  color: #4b5563 !important;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08) !important;
+}
+
+.worko-native-app .request-composer-sheet .request-composer-textarea {
+  background: #ffffff !important;
+  color: #1f2937 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.05),
+    0 8px 20px rgba(15, 23, 42, 0.04) !important;
+}
+
+.worko-native-app .request-composer-sheet .request-composer-textarea::placeholder {
+  color: #6b7a90 !important;
+}
+
+.dark .worko-native-app .request-composer-sheet,
+.worko-native-app.dark .request-composer-sheet {
+  background: #081426 !important;
+  color: #f8fbff !important;
+}
+
+.dark .worko-native-app .request-composer-header,
+.worko-native-app.dark .request-composer-header {
+  background: rgba(8, 20, 38, 0.98) !important;
+  color: #f8fbff !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28) !important;
+}
+
+.dark .worko-native-app .request-composer-header .text-slate-900,
+.dark .worko-native-app .request-composer-header .text-slate-800,
+.dark .worko-native-app .request-composer-header .text-slate-700,
+.worko-native-app.dark .request-composer-header .text-slate-900,
+.worko-native-app.dark .request-composer-header .text-slate-800,
+.worko-native-app.dark .request-composer-header .text-slate-700 {
+  color: #f8fbff !important;
+}
+
+.dark .worko-native-app .request-composer-header button,
+.worko-native-app.dark .request-composer-header button {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #dbe7f7 !important;
+  box-shadow: none !important;
+}
+
+.dark .worko-native-app .request-composer-header button:hover,
+.worko-native-app.dark .request-composer-header button:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+}
+
+.dark .worko-native-app .request-composer-sheet .bg-white,
+.dark .worko-native-app .request-composer-sheet [class*="bg-white/"],
+.worko-native-app.dark .request-composer-sheet .bg-white,
+.worko-native-app.dark .request-composer-sheet [class*="bg-white/"] {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .worko-native-app .request-composer-sheet .bg-slate-50,
+.dark .worko-native-app .request-composer-sheet .bg-slate-100,
+.worko-native-app.dark .request-composer-sheet .bg-slate-50,
+.worko-native-app.dark .request-composer-sheet .bg-slate-100 {
+  background-color: #10213a !important;
+}
+
+.dark .worko-native-app .request-composer-sheet .request-composer-textarea,
+.worko-native-app.dark .request-composer-sheet .request-composer-textarea {
+  background: #12233c !important;
+  color: #f8fbff !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 10px 24px rgba(0, 0, 0, 0.18) !important;
+}
+
+.dark .worko-native-app .request-composer-sheet .request-composer-textarea::placeholder,
+.worko-native-app.dark .request-composer-sheet .request-composer-textarea::placeholder {
+  color: #8fa1ba !important;
+}
+
+.dark .worko-native-app .request-composer-sheet .text-slate-900,
+.dark .worko-native-app .request-composer-sheet .text-slate-800,
+.worko-native-app.dark .request-composer-sheet .text-slate-900,
+.worko-native-app.dark .request-composer-sheet .text-slate-800 {
+  color: #f8fbff !important;
+}
+
+.dark .worko-native-app .request-composer-sheet .text-slate-700,
+.dark .worko-native-app .request-composer-sheet .text-slate-600,
+.worko-native-app.dark .request-composer-sheet .text-slate-700,
+.worko-native-app.dark .request-composer-sheet .text-slate-600 {
+  color: #d5e3fb !important;
+}
+
+/* Modo visual sério: sem sombras, brilhos, gradientes ou blur decorativo no app logado. */
+.worko-native-app,
+.worko-native-app *,
+.worko-native-app *::before,
+.worko-native-app *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+.worko-native-app *:not(.gm-style):not(.gm-style *) {
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.worko-native-app [class*="drop-shadow"],
+.worko-native-app [style*="drop-shadow"],
+.worko-native-app [class*="blur-"]:not(.gm-style):not(.gm-style *) {
+  filter: none !important;
+}
