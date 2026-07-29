@@ -44,7 +44,7 @@ const countOutstandingWalletEntriesForAccountDeletionStatement = db.prepare(
     FROM service_requests
     LEFT JOIN worker_withdrawals ON worker_withdrawals.id = service_requests.worker_withdrawal_id
     WHERE service_requests.worker_user_id = ?
-      AND service_requests.asaas_payment_status IN ('RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH')
+      AND service_requests.asaas_payment_status IN ('RECEIVED', 'CONFIRMED')
       AND (
         service_requests.worker_withdrawal_id IS NULL
         OR COALESCE(worker_withdrawals.status, '') <> 'DONE'
@@ -68,9 +68,14 @@ const recentReviewsByUserStatement = db.prepare(
       service_reviews.comment,
       service_reviews.reviewer_user_id,
       reviewer.full_name AS reviewer_name,
+      reviewer.avatar AS reviewer_avatar,
+      service_requests.category AS service_category,
+      service_requests.description AS service_description,
+      service_requests.service_details_json,
       service_reviews.created_at
     FROM service_reviews
     INNER JOIN users AS reviewer ON reviewer.id = service_reviews.reviewer_user_id
+    LEFT JOIN service_requests ON service_requests.id = service_reviews.service_request_id
     WHERE service_reviews.target_user_id = ?
     ORDER BY service_reviews.created_at DESC
     LIMIT 5
@@ -78,12 +83,25 @@ const recentReviewsByUserStatement = db.prepare(
 );
 
 function mapReviewRow(row) {
+  let serviceTitle = row.service_description ?? "";
+
+  try {
+    const details = JSON.parse(row.service_details_json ?? "null");
+    if (details && typeof details.title === "string" && details.title.trim()) {
+      serviceTitle = details.title.trim();
+    }
+  } catch {
+    serviceTitle = row.service_description ?? "";
+  }
+
   return {
     id: row.id,
     rating: Number(row.rating) || 0,
     comment: row.comment ?? "",
     reviewerId: row.reviewer_user_id,
     reviewerName: row.reviewer_name ?? "Cliente",
+    reviewerAvatar: row.reviewer_avatar ?? null,
+    serviceTitle: serviceTitle || row.service_category || "Atendimento Worko",
     createdAt: row.created_at ?? "",
   };
 }
@@ -117,7 +135,7 @@ function parseStoredList(value) {
   }
 }
 
-function normalizeProfileList(value, fallback) {
+function normalizeProfileList(value, fallback, maxItems = 12) {
   if (!Array.isArray(value)) {
     return fallback;
   }
@@ -129,7 +147,7 @@ function normalizeProfileList(value, fallback) {
           .map((item) => String(item ?? "").trim())
           .filter(Boolean)
       )
-    ).slice(0, 12)
+    ).slice(0, maxItems)
   );
 }
 
@@ -673,7 +691,7 @@ async function requestGoogleToken(code) {
     );
   }
 
-  return payload.access_token;
+  return payload;
 }
 
 async function requestGoogleProfile(accessToken) {
@@ -698,6 +716,58 @@ async function requestGoogleProfile(accessToken) {
     email: normalizeEmail(profile.email),
     fullName: String(profile.name ?? profile.email).trim(),
     avatar: String(profile.picture ?? "").trim() || null,
+  };
+}
+
+function readGoogleProfileFromIdToken(idToken) {
+  const tokenParts = String(idToken ?? "").split(".");
+
+  if (tokenParts.length !== 3) {
+    return null;
+  }
+
+  let claims;
+
+  try {
+    claims = JSON.parse(Buffer.from(tokenParts[1], "base64url").toString("utf8"));
+  } catch {
+    throw new HttpError(502, "O Google devolveu uma identificação inválida. Tente novamente.");
+  }
+
+  const audiences = Array.isArray(claims?.aud) ? claims.aud : [claims?.aud];
+  const issuer = String(claims?.iss ?? "").trim();
+  const expiresAt = Number(claims?.exp ?? 0) * 1000;
+
+  if (
+    !audiences.includes(config.googleOAuth.clientId) ||
+    !["accounts.google.com", "https://accounts.google.com"].includes(issuer) ||
+    !Number.isFinite(expiresAt) ||
+    expiresAt <= Date.now() ||
+    !claims?.sub ||
+    !claims?.email
+  ) {
+    throw new HttpError(403, "Não conseguimos confirmar a identidade desta conta Google.");
+  }
+
+  if (claims.email_verified !== true) {
+    throw new HttpError(403, "Use uma conta Google com e-mail verificado.");
+  }
+
+  return {
+    subject: String(claims.sub).trim(),
+    email: normalizeEmail(claims.email),
+    fullName: String(claims.name ?? claims.email).trim(),
+    avatar: String(claims.picture ?? "").trim() || null,
+  };
+}
+
+function toPendingVerification(user) {
+  return {
+    userId: user.id,
+    fullName: user.full_name,
+    email: user.email,
+    phone: user.phone,
+    birthDate: user.birth_date,
   };
 }
 
@@ -733,7 +803,7 @@ function createGoogleUser(profile) {
         google_subject,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'email', ?, ?, ?, ?, 'google', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 'google', ?, ?, ?)
     `
   ).run(
     userId,
@@ -743,10 +813,6 @@ function createGoogleUser(profile) {
     "",
     createPasswordHash(createSessionToken()),
     profile.avatar,
-    timestamp,
-    timestamp,
-    timestamp,
-    currentLegalVersion,
     profile.subject,
     timestamp,
     timestamp
@@ -817,12 +883,10 @@ function upsertGoogleUser(profile) {
           ELSE 'password'
         END,
         avatar = COALESCE(NULLIF(avatar, ''), ?),
-        verified_channel = 'email',
-        email_verified_at = COALESCE(email_verified_at, ?),
         updated_at = ?
       WHERE id = ?
     `
-  ).run(profile.subject, profile.avatar ?? "", timestamp, timestamp, user.id);
+  ).run(profile.subject, profile.avatar ?? "", timestamp, user.id);
 
   return getUserById(user.id);
 }
@@ -868,9 +932,22 @@ export async function completeGoogleOAuthLogin({ code, state }) {
   }
 
   const { rememberMe, returnTo } = consumeGoogleOAuthState(state);
-  const accessToken = await requestGoogleToken(String(code));
-  const profile = await requestGoogleProfile(accessToken);
+  const googleTokens = await requestGoogleToken(String(code));
+  const profile =
+    readGoogleProfileFromIdToken(googleTokens.id_token) ??
+    (await requestGoogleProfile(googleTokens.access_token));
   const user = upsertGoogleUser(profile);
+
+  if (!user.verified_channel) {
+    return {
+      token: null,
+      pendingVerification: toPendingVerification(user),
+      user: mapUser(user),
+      rememberMe,
+      returnTo,
+    };
+  }
+
   const token = createSession(user.id, { rememberMe });
 
   return {
@@ -1273,8 +1350,8 @@ export function updateUserProfile(userId, updates) {
       : user.headline ?? "";
   const nextBio =
     typeof updates.bio === "string" ? updates.bio.trim().slice(0, 420) : user.bio ?? "";
-  const nextProfessions = normalizeProfileList(updates.professions, user.professions_json);
-  const nextSkills = normalizeProfileList(updates.skills, user.skills_json);
+  const nextProfessions = normalizeProfileList(updates.professions, user.professions_json, 5);
+  const nextSkills = normalizeProfileList(updates.skills, user.skills_json, 10);
   const nextAvailabilityNote =
     typeof updates.availabilityNote === "string"
       ? updates.availabilityNote.trim().slice(0, 100)
@@ -1544,4 +1621,5 @@ export async function verifyUserCpf(userId, cpfValue) {
 
   return mapUser(getUserById(userId));
 }
+
 

@@ -37,7 +37,7 @@ function getQueueLabel(queueAheadCount: number, status: SupportTicket["status"])
       : "Você é o próximo da fila";
   }
   if (queueAheadCount === 1) return "1 pessoa está na sua frente";
-  return `${queueAheadCount} pessoas estão na sua frente`;
+  return `${queueAheadCount} pessoas estáo na sua frente`;
 }
 
 function getStatusTone(status: SupportTicket["status"]) {
@@ -265,7 +265,7 @@ export function ProfileSupport() {
               ) : null}
               {lastMessageLabel ? (
                 <p className="mt-3 text-xs font-medium text-slate-500">
-                  Última mensagem: {lastMessageLabel}
+                  última mensagem: {lastMessageLabel}
                 </p>
               ) : null}
             </div>
@@ -407,3 +407,4 @@ export function ProfileSupport() {
       </ProfileSectionLayout>
   );
 }
+

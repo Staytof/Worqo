@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   Clock3,
@@ -14,6 +14,7 @@ import { motion } from "motion/react";
 import { Navigate, useNavigate } from "react-router";
 import { useApp } from "../../context/AppContext";
 import { useErrorToast } from "../../hooks/useErrorToast";
+import { loadGoogleMapsApi } from "../../lib/googleMaps";
 import type { ServiceLocationMode } from "../../types";
 import {
   calculateAppServiceFeeAmount,
@@ -26,8 +27,87 @@ import {
   parseCurrencyValue,
 } from "../../utils/helpers";
 
+type ServiceLocationChoice = {
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  label: string;
+};
+
+function getBrowserCurrentLocation(): Promise<ServiceLocationChoice> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("Não conseguimos acessar o GPS deste aparelho."));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: Number.isFinite(position.coords.accuracy)
+            ? position.coords.accuracy
+            : null,
+          label: "Localização atual",
+        });
+      },
+      () => {
+        reject(new Error("Ative a permissão de localização para usar o local atual."));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15_000,
+        maximumAge: 10_000,
+      }
+    );
+  });
+}
+
+async function reverseGeocodeLocation(location: ServiceLocationChoice) {
+  try {
+    const maps = await loadGoogleMapsApi();
+    const geocoder = new maps.Geocoder();
+    const result = await geocoder.geocode({
+      location: {
+        lat: location.latitude,
+        lng: location.longitude,
+      },
+    });
+    const label = result.results?.[0]?.formatted_address;
+
+    return label ? { ...location, label } : location;
+  } catch {
+    return location;
+  }
+}
+
+async function geocodeAddress(address: string): Promise<ServiceLocationChoice> {
+  const maps = await loadGoogleMapsApi();
+  const geocoder = new maps.Geocoder();
+  const result = await geocoder.geocode({
+    address,
+    region: "BR",
+  });
+  const place = result.results?.[0];
+  const location = place?.geometry?.location;
+
+  if (!location) {
+    throw new Error("Não encontramos esse endereço no mapa. Confira e tente novamente.");
+  }
+
+  return {
+    latitude: location.lat(),
+    longitude: location.lng(),
+    accuracy: null,
+    label: place.formatted_address || address,
+  };
+}
+
 export function ServiceDetails() {
   const navigate = useNavigate();
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const autocompleteRef = useRef<any>(null);
   const {
     state: { activeServiceRequest, user },
     deleteActiveServiceRequest,
@@ -40,6 +120,8 @@ export function ServiceDetails() {
   const [delayToleranceMinutes, setDelayToleranceMinutes] = useState(15);
   const [locationMode, setLocationMode] = useState<ServiceLocationMode>("residence");
   const [address, setAddress] = useState("");
+  const [streetLocation, setStreetLocation] = useState<ServiceLocationChoice | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<ServiceLocationChoice | null>(null);
   const [error, setError] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -73,6 +155,23 @@ export function ServiceDetails() {
     setDelayToleranceMinutes(remoteDelayToleranceMinutes);
     setLocationMode(remoteLocationMode);
     setAddress(remoteAddress);
+    const remoteLocation =
+      activeServiceRequest.details?.latitude !== null &&
+      activeServiceRequest.details?.latitude !== undefined &&
+      activeServiceRequest.details?.longitude !== null &&
+      activeServiceRequest.details?.longitude !== undefined
+        ? {
+            latitude: activeServiceRequest.details.latitude,
+            longitude: activeServiceRequest.details.longitude,
+            accuracy: activeServiceRequest.details.accuracy ?? null,
+            label:
+              activeServiceRequest.details.locationLabel ||
+              activeServiceRequest.details.address ||
+              "Local do atendimento",
+          }
+        : null;
+    setCurrentLocation(remoteLocationMode === "residence" ? remoteLocation : null);
+    setStreetLocation(remoteLocationMode === "street" ? remoteLocation : null);
   }, [
     activeServiceRequest?.id,
     remoteAddress,
@@ -83,6 +182,53 @@ export function ServiceDetails() {
     remoteSchedule,
     remoteTitle,
   ]);
+
+  useEffect(() => {
+    if (locationMode !== "street" || !addressInputRef.current || autocompleteRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadGoogleMapsApi()
+      .then((maps) => {
+        if (cancelled || !addressInputRef.current || autocompleteRef.current) {
+          return;
+        }
+
+        const autocomplete = new maps.places.Autocomplete(addressInputRef.current, {
+          fields: ["formatted_address", "geometry", "name"],
+          componentRestrictions: { country: "br" },
+        });
+
+        autocomplete.addListener("place_changed", () => {
+          const place = autocomplete.getPlace();
+          const selectedAddress = place?.formatted_address || place?.name || "";
+          const placeLocation = place?.geometry?.location;
+
+          if (selectedAddress) {
+            setAddress(selectedAddress);
+          }
+
+          if (placeLocation) {
+            setStreetLocation({
+              latitude: placeLocation.lat(),
+              longitude: placeLocation.lng(),
+              accuracy: null,
+              label: selectedAddress || "Local do atendimento",
+            });
+          }
+        });
+
+        autocompleteRef.current = autocomplete;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      autocompleteRef.current = null;
+    };
+  }, [locationMode]);
 
   if (!activeServiceRequest) {
     return <Navigate to="/app" replace />;
@@ -131,16 +277,38 @@ export function ServiceDetails() {
     }
 
     if (locationMode === "street" && !address.trim()) {
-      setError("Informe o endereço ou ponto de encontro do serviço.");
-      return;
-    }
-
-    if (locationMode === "residence" && !(user?.address ?? "").trim()) {
-      setError("Cadastre seu endereço no perfil para usar a opção de residência.");
+      setError("Informe o endereço do atendimento.");
       return;
     }
 
     setIsSubmitting(true);
+    let selectedLocation: ServiceLocationChoice;
+
+    try {
+      if (locationMode === "residence") {
+        const gpsLocation = currentLocation ?? (await getBrowserCurrentLocation());
+        selectedLocation = await reverseGeocodeLocation(gpsLocation);
+        setCurrentLocation(selectedLocation);
+      } else {
+        selectedLocation = streetLocation ?? (await geocodeAddress(address.trim()));
+        setStreetLocation(selectedLocation);
+        setAddress(selectedLocation.label || address.trim());
+      }
+    } catch (locationError) {
+      setIsSubmitting(false);
+      setError(
+        locationError instanceof Error
+          ? locationError.message
+          : "Não conseguimos confirmar a localização do atendimento."
+      );
+      return;
+    }
+
+    const selectedAddress =
+      locationMode === "residence"
+        ? selectedLocation.label
+        : selectedLocation.label || address.trim();
+
     const result = await submitServiceDetails({
       title: title.trim(),
       price: price.trim(),
@@ -148,7 +316,11 @@ export function ServiceDetails() {
       schedule: schedule.trim(),
       delayToleranceMinutes,
       locationMode,
-      address: locationMode === "residence" ? user?.address ?? "" : address.trim(),
+      address: selectedAddress,
+      latitude: selectedLocation.latitude,
+      longitude: selectedLocation.longitude,
+      accuracy: selectedLocation.accuracy,
+      locationLabel: selectedLocation.label || selectedAddress,
     });
     setIsSubmitting(false);
 
@@ -159,7 +331,6 @@ export function ServiceDetails() {
 
     navigate("/app/service/waiting");
   };
-
   const handleDeleteRequest = async () => {
     if (isDeletingRequest) {
       return;
@@ -314,7 +485,7 @@ export function ServiceDetails() {
               </div>
               <div className="rounded-2xl border border-white bg-white px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  Asaas fixo
+                  Taxa fixa
                 </p>
                 <p className="mt-1 text-sm font-semibold text-slate-900">
                   {formatCurrencyAmount(asaasFeeAmount)}
@@ -345,7 +516,7 @@ export function ServiceDetails() {
               >
                 <span className="flex items-center gap-2">
                   <Home className="h-4 w-4" />
-                  Sim, no meu endereço
+                  Localização atual
                 </span>
               </button>
 
@@ -360,7 +531,7 @@ export function ServiceDetails() {
               >
                 <span className="flex items-center gap-2">
                   <MapPin className="h-4 w-4" />
-                  Não, em outro local
+                  Outro endereço
                 </span>
               </button>
             </div>
@@ -369,10 +540,10 @@ export function ServiceDetails() {
           {locationMode === "residence" ? (
             <div className="mt-5 rounded-[26px] border border-emerald-200 bg-emerald-50 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
-                Endereço que será enviado
+                Local que será enviado
               </p>
               <p className="mt-2 text-sm font-medium text-emerald-900">
-                {user?.address?.trim() || "Cadastre seu endereço no perfil para prosseguir."}
+                {currentLocation?.label || "O GPS será confirmado ao enviar."}
               </p>
             </div>
           ) : (
@@ -381,16 +552,24 @@ export function ServiceDetails() {
                 <MapPin className="h-4 w-4 text-blue-600" />
                 Endereço do atendimento
               </span>
-              <textarea
+              <input
+                ref={addressInputRef}
+                type="text"
                 value={address}
-                onChange={(event) => setAddress(event.target.value)}
-                rows={4}
-                placeholder="Ex.: Rua principal, próximo a praca central..."
-                className="w-full resize-none rounded-[26px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
+                onChange={(event) => {
+                  setAddress(event.target.value);
+                  setStreetLocation(null);
+                }}
+                placeholder="Ex.: Rua principal, próximo é praça central..."
+                className="w-full rounded-[26px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
               />
+              {streetLocation?.label ? (
+                <p className="text-xs font-semibold text-emerald-700">
+                  Rota definida para: {streetLocation.label}
+                </p>
+              ) : null}
             </label>
           )}
-
           {error && (
             <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error}
@@ -467,4 +646,5 @@ export function ServiceDetails() {
     </div>
   );
 }
+
 

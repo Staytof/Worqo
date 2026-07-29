@@ -5,6 +5,7 @@ import { AdminRouteRedirect } from "./components/AdminRouteRedirect";
 import { AdminPanel } from "./components/AdminPanel";
 import { AuthLayout } from "./components/AuthLayout";
 import { ChatList } from "./components/ChatList";
+import { ClientOrders } from "./components/ClientOrders";
 import { Home } from "./components/Home";
 import { LegalPage } from "./components/LegalPage";
 import { Login } from "./components/Login";
@@ -53,6 +54,7 @@ export const router = createBrowserRouter([
       { index: true, Component: Home },
       { path: "mural", element: createElement(Navigate, { to: "/app/chat", replace: true }) },
       { path: "chat", Component: ChatList },
+      { path: "orders", Component: ClientOrders },
       { path: "notifications", Component: Notifications },
       { path: "profile", Component: Profile },
       { path: "wallet", Component: Wallet },

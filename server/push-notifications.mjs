@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+﻿import crypto from "node:crypto";
 import fs from "node:fs";
 import { db } from "./db.mjs";
 import { config } from "./config.mjs";
@@ -7,14 +7,46 @@ import { createId, nowIso } from "./security.mjs";
 const FCM_AUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 const FCM_CHANNEL_ID = "worqo-general";
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60_000;
+const TRANSIENT_RETRY_DELAYS_MS = [750, 2_000];
 const METADATA_TOKEN_ENDPOINT =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts";
 
 const selectActivePushDevicesByUserStatement = db.prepare(
   `
-    SELECT token, platform
+    SELECT
+      id,
+      token,
+      platform,
+      app_version,
+      device_label,
+      created_at,
+      updated_at,
+      disabled_at,
+      last_attempt_at,
+      last_success_at,
+      last_error
     FROM user_push_devices
     WHERE user_id = ? AND disabled_at IS NULL
+    ORDER BY updated_at DESC
+    LIMIT 10
+  `
+);
+
+const selectPushDeviceStatusByUserStatement = db.prepare(
+  `
+    SELECT
+      id,
+      platform,
+      app_version,
+      device_label,
+      created_at,
+      updated_at,
+      disabled_at,
+      last_attempt_at,
+      last_success_at,
+      last_error
+    FROM user_push_devices
+    WHERE user_id = ?
     ORDER BY updated_at DESC
     LIMIT 10
   `
@@ -56,7 +88,15 @@ const disablePushDeviceStatement = db.prepare(
 const markPushDeviceErrorStatement = db.prepare(
   `
     UPDATE user_push_devices
-    SET updated_at = ?, last_error = ?
+    SET last_attempt_at = ?, last_error = ?
+    WHERE token = ?
+  `
+);
+
+const markPushDeviceSuccessStatement = db.prepare(
+  `
+    UPDATE user_push_devices
+    SET last_attempt_at = ?, last_success_at = ?, last_error = NULL
     WHERE token = ?
   `
 );
@@ -71,6 +111,8 @@ const deletePushDeviceStatement = db.prepare(
 let cachedAccessToken = "";
 let cachedAccessTokenExpiresAt = 0;
 let loggedMissingFcmConfig = false;
+let lastFcmAuthenticationError = "";
+let lastFcmAuthenticationAt = null;
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -225,12 +267,22 @@ async function getFcmAccessToken() {
   let access;
 
   if (credentials?.clientEmail && credentials?.privateKey) {
-    access = await requestServiceAccountAccessToken(credentials);
+    try {
+      access = await requestServiceAccountAccessToken(credentials);
+    } catch (error) {
+      lastFcmAuthenticationError = normalizeText(error?.message || error);
+      lastFcmAuthenticationAt = nowIso();
+      throw error;
+    }
   } else {
     access = await requestMetadataAccessToken();
   }
 
   if (!access?.accessToken || !access?.projectId) {
+    lastFcmAuthenticationError =
+      "O servidor não conseguiu obter uma credencial válida para o Firebase.";
+    lastFcmAuthenticationAt = nowIso();
+
     if (!loggedMissingFcmConfig) {
       console.warn(
         "FCM não está configurado. Defina FCM_PROJECT_ID com credenciais do Firebase ou use a service account da VM."
@@ -241,6 +293,8 @@ async function getFcmAccessToken() {
     return "";
   }
 
+  lastFcmAuthenticationError = "";
+  lastFcmAuthenticationAt = nowIso();
   cachedAccessToken = access.accessToken;
   cachedAccessTokenExpiresAt = access.expiresAt;
   return cachedAccessToken;
@@ -260,6 +314,8 @@ function formatPushTitle(kind, meta) {
       return "Conversa recusada";
     case "support-message":
       return "Mensagem do SAC";
+    case "service-interest":
+      return "Prestador(a) interessado(a)";
     case "service-details-sent":
       return "Detalhes enviados";
     case "payment-ready":
@@ -278,6 +334,10 @@ function formatPushTitle(kind, meta) {
       return "Falha no saque";
     case "service-accepted":
       return "Você foi aceito";
+    case "service-arrival-confirmed":
+      return "Chegada confirmada";
+    case "service-completed":
+      return "Atendimento atualizado";
     case "requester-continued-search":
       return "Busca reaberta";
     case "service-cancelled":
@@ -339,9 +399,15 @@ function buildPushMessagePayload(token, notification) {
       data,
       android: {
         priority: "HIGH",
+        ttl: "86400s",
         notification: {
           channel_id: FCM_CHANNEL_ID,
-          click_action: "OPEN_WORQO_NOTIFICATION",
+          icon: "ic_stat_worko",
+          color: "#2563EB",
+          sound: "default",
+          default_sound: true,
+          default_vibrate_timings: true,
+          notification_priority: "PRIORITY_HIGH",
         },
       },
     },
@@ -372,30 +438,81 @@ function isPermanentPushTokenError(errorCode) {
   return errorCode === "UNREGISTERED" || errorCode === "INVALID_ARGUMENT";
 }
 
-async function sendPushMessageToToken(device, notification) {
-  const accessToken = await getFcmAccessToken();
+function isTransientPushFailure(response) {
+  return response.status === 408 || response.status === 429 || response.status >= 500;
+}
 
-  if (!accessToken || !config.fcm.projectId) {
+function wait(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function sendPushMessageToToken(device, notification, attempt = 0) {
+  const attemptAt = nowIso();
+  let accessToken = "";
+
+  try {
+    accessToken = await getFcmAccessToken();
+  } catch (error) {
+    const message = normalizeText(error?.message || error) || "Falha ao autenticar no Firebase.";
+    markPushDeviceErrorStatement.run(attemptAt, message, device.token);
     return false;
   }
 
-  const response = await fetch(
-    `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(
-      config.fcm.projectId
-    )}/messages:send`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(buildPushMessagePayload(device.token, notification)),
+  if (!accessToken || !config.fcm.projectId) {
+    markPushDeviceErrorStatement.run(
+      attemptAt,
+      "O servidor não conseguiu autenticar no Firebase.",
+      device.token
+    );
+    return false;
+  }
+
+  let response;
+
+  try {
+    response = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(
+        config.fcm.projectId
+      )}/messages:send`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildPushMessagePayload(device.token, notification)),
+      }
+    );
+  } catch (error) {
+    if (attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+      await wait(TRANSIENT_RETRY_DELAYS_MS[attempt]);
+      return sendPushMessageToToken(device, notification, attempt + 1);
     }
-  );
+
+    const message = `Falha de rede ao acessar o Firebase: ${
+      normalizeText(error?.message || error) || "conexão indisponível"
+    }`;
+    markPushDeviceErrorStatement.run(nowIso(), message, device.token);
+    return false;
+  }
+
   const data = await response.json().catch(() => null);
 
   if (response.ok) {
+    const successAt = nowIso();
+    markPushDeviceSuccessStatement.run(successAt, successAt, device.token);
     return true;
+  }
+
+  if (response.status === 401 && attempt === 0) {
+    cachedAccessToken = "";
+    cachedAccessTokenExpiresAt = 0;
+    return sendPushMessageToToken(device, notification, attempt + 1);
+  }
+
+  if (isTransientPushFailure(response) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+    await wait(TRANSIENT_RETRY_DELAYS_MS[attempt]);
+    return sendPushMessageToToken(device, notification, attempt + 1);
   }
 
   const errorCode = extractFcmErrorCode(data);
@@ -414,6 +531,26 @@ async function sendPushMessageToToken(device, notification) {
 
 export function isPushNotificationAvailable() {
   return Boolean(config.fcm.projectId);
+}
+
+function getFcmCredentialMode() {
+  if (config.fcm.serviceAccountFile) {
+    return "service-account-file";
+  }
+
+  if (config.fcm.serviceAccountJson) {
+    return "service-account-json";
+  }
+
+  if (config.fcm.clientEmail && config.fcm.privateKey) {
+    return "service-account-env";
+  }
+
+  if (config.fcm.useMetadataServer) {
+    return "gce-metadata";
+  }
+
+  return "none";
 }
 
 export function registerPushTokenForUser(userId, payload) {
@@ -441,6 +578,72 @@ export function registerPushTokenForUser(userId, payload) {
   );
 
   return { ok: true };
+}
+
+export function getPushNotificationStatusForUser(userId) {
+  const devices = selectPushDeviceStatusByUserStatement.all(userId);
+
+  return {
+    configured: isPushNotificationAvailable(),
+    projectId: config.fcm.projectId || null,
+    credentialMode: getFcmCredentialMode(),
+    authentication: {
+      lastCheckedAt: lastFcmAuthenticationAt,
+      lastError: lastFcmAuthenticationError || null,
+    },
+    activeDeviceCount: devices.filter((device) => !device.disabled_at).length,
+    devices: devices.map((device) => ({
+      id: device.id,
+      platform: device.platform,
+      appVersion: device.app_version || null,
+      deviceLabel: device.device_label || null,
+      registeredAt: device.created_at,
+      updatedAt: device.updated_at,
+      disabledAt: device.disabled_at || null,
+      lastAttemptAt: device.last_attempt_at || null,
+      lastSuccessAt: device.last_success_at || null,
+      lastError: device.last_error || null,
+    })),
+  };
+}
+
+export async function sendPushTestForUser(userId) {
+  const devices = selectActivePushDevicesByUserStatement.all(userId);
+
+  if (devices.length === 0) {
+    return {
+      ok: false,
+      sent: 0,
+      failed: 0,
+      reason: "Nenhum aparelho está registrado para receber notificações.",
+    };
+  }
+
+  const timestamp = nowIso();
+  const notification = {
+    id: createId(),
+    kind: "push-test",
+    title: "Notificações do Worko",
+    message: "Teste concluído. Este aparelho está recebendo notificações.",
+    path: "/app/notifications",
+    createdAt: timestamp,
+  };
+  const results = await Promise.allSettled(
+    devices.map((device) => sendPushMessageToToken(device, notification))
+  );
+  const sent = results.filter(
+    (result) => result.status === "fulfilled" && result.value === true
+  ).length;
+
+  return {
+    ok: sent > 0,
+    sent,
+    failed: results.length - sent,
+    reason:
+      sent > 0
+        ? null
+        : "O Firebase não aceitou a notificação. Consulte o status do dispositivo.",
+  };
 }
 
 export function unregisterPushTokenForUser(userId, payload) {
@@ -488,3 +691,4 @@ export function buildStoredNotificationPayload(notificationId, kind, message, me
     createdAt,
   };
 }
+

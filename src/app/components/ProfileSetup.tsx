@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   ArrowLeft,
@@ -16,6 +16,7 @@ import logoImg from "@/assets/logosup.png";
 import { useApp } from "../context/AppContext";
 import { useErrorToast } from "../hooks/useErrorToast";
 import { loadGoogleMapsApi } from "../lib/googleMaps";
+import { requestNativePhotoPermission } from "../lib/nativeMediaPermissions";
 import { readImageAsOptimizedDataUrl } from "../utils/helpers";
 import { AvatarCropDialog } from "./ui/AvatarCropDialog";
 import type { AccountKind } from "../types";
@@ -169,6 +170,17 @@ export function ProfileSetup() {
     } finally {
       event.target.value = "";
     }
+  };
+
+  const handleChooseAvatar = async () => {
+    const allowed = await requestNativePhotoPermission();
+
+    if (!allowed) {
+      setError("Ative a permissão de fotos para escolher sua imagem de perfil.");
+      return;
+    }
+
+    avatarInputRef.current?.click();
   };
 
   const handleConfirmAccountKind = async () => {
@@ -387,7 +399,7 @@ export function ProfileSetup() {
           <div className="mb-8 flex w-full flex-col items-center">
             <div className="group relative">
               <div
-                onClick={() => avatarInputRef.current?.click()}
+                onClick={() => void handleChooseAvatar()}
                 className={`relative flex h-36 w-36 cursor-pointer items-center justify-center overflow-hidden rounded-full border-4 shadow-lg transition-all duration-300 ${
                   imagePreview
                     ? "border-blue-500"
@@ -426,7 +438,7 @@ export function ProfileSetup() {
 
             <button
               type="button"
-              onClick={() => avatarInputRef.current?.click()}
+              onClick={() => void handleChooseAvatar()}
               className="mt-6 text-sm font-semibold text-blue-600 transition-colors hover:text-blue-700"
             >
               {imagePreview ? "Trocar foto" : "Escolher da galeria"}
@@ -544,4 +556,5 @@ export function ProfileSetup() {
     </motion.div>
   );
 }
+
 

@@ -1,19 +1,22 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowUpRight,
   Clock3,
+  DollarSign,
+  Download,
   HelpCircle,
   RefreshCcw,
   ShieldCheck,
   TriangleAlert,
   Wallet as WalletIcon,
+  X,
 } from "lucide-react";
 import { Link } from "react-router";
 import { apiRequest } from "../api/client";
 import { useApp } from "../context/AppContext";
 import { useErrorToast } from "../hooks/useErrorToast";
-import type { WorkerWalletSummary, WorkerWithdrawalRecord } from "../types";
+import type { WorkerWalletEntry, WorkerWalletSummary, WorkerWithdrawalRecord } from "../types";
 import { formatCurrencyAmount, INSTANT_WITHDRAWAL_FEE_AMOUNT } from "../utils/helpers";
 import { ProfileSectionLayout } from "./profile/ProfileSectionLayout";
 
@@ -83,34 +86,19 @@ function formatWalletDate(value: string | null | undefined) {
   }).format(date);
 }
 
-type WalletBalancePanel = "awaiting" | "available" | "protected" | "processing";
 type WithdrawalMode = "instant" | "standard";
+type WalletHistoryModal = "entries" | "withdrawals" | null;
 
-const walletBalancePanelContent: Record<
-  WalletBalancePanel,
-  { title: string; tone: string; label: string }
-> = {
-  awaiting: {
-    title: "Aguardando",
-    label: "Aguardando",
-    tone: "border-amber-200 bg-amber-50 text-amber-700",
-  },
-  available: {
-    title: "Disponível",
-    label: "Disponível",
-    tone: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  },
-  protected: {
-    title: "Protegido",
-    label: "Protegido",
-    tone: "border-blue-200 bg-blue-50 text-blue-700",
-  },
-  processing: {
-    title: "Sacando",
-    label: "Sacando",
-    tone: "border-violet-200 bg-violet-50 text-violet-700",
-  },
-};
+function getWalletEntryStatusLabel(entry: WorkerWalletEntry) {
+  if (entry.status === "available-for-withdrawal") return "Liberado";
+  if (entry.status === "withdrawal-in-progress") return "Saque em andamento";
+  if (entry.status === "withdrawn-via-pix") return "Sacado";
+  if (entry.status === "held-for-service") return "Protegido";
+  if (entry.status === "awaiting-client-payment") return "Aguardando pagamento";
+  if (entry.status === "awaiting-worker-confirmation") return "Aguardando confirmação";
+  if (entry.status === "in-progress") return "Em atendimento";
+  return entry.status;
+}
 
 export function Wallet() {
   const {
@@ -123,42 +111,26 @@ export function Wallet() {
   const [isWithdrawingMode, setIsWithdrawingMode] = useState<WithdrawalMode | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [openBalancePanel, setOpenBalancePanel] = useState<WalletBalancePanel | null>(null);
+  const [historyModal, setHistoryModal] = useState<WalletHistoryModal>(null);
   const [isPixHelpOpen, setIsPixHelpOpen] = useState(false);
   useErrorToast(error);
 
   const walletReady = Boolean(wallet.canReceivePixTransfers || user?.canReceivePixTransfers);
-  const currentBalanceCents =
-    wallet.availableToWithdrawCents +
-    wallet.heldForServiceCents +
-    wallet.processingWithdrawalsCents;
+  const currentBalanceCents = wallet.availableToWithdrawCents;
   const availableForInstantCents = wallet.instantAvailableNowCents;
   const availableForStandardCents = wallet.standardAvailableNowCents;
   const instantFeeCents = wallet.instantWithdrawalFeeCents;
   const hasEnoughForInstantWithdrawal = availableForInstantCents > instantFeeCents;
   const instantNetPayoutCents = Math.max(availableForInstantCents - instantFeeCents, 0);
-
-  const balanceCards: Array<{
-    id: WalletBalancePanel;
-    amountCents: number;
-  }> = [
-    {
-      id: "awaiting",
-      amountCents: wallet.awaitingClientPaymentCents,
-    },
-    {
-      id: "protected",
-      amountCents: wallet.heldForServiceCents,
-    },
-    {
-      id: "available",
-      amountCents: wallet.availableToWithdrawCents,
-    },
-    {
-      id: "processing",
-      amountCents: wallet.processingWithdrawalsCents,
-    },
-  ];
+  const nextFreeWithdrawalLabel = formatWalletDate(wallet.nextFreeWithdrawalAvailableAt);
+  const standardWithdrawalLabel =
+    isWithdrawingMode === "standard"
+      ? "Solicitando saque..."
+      : availableForStandardCents > 0
+        ? "Saque grátis disponível"
+        : nextFreeWithdrawalLabel
+          ? `Saque grátis em ${nextFreeWithdrawalLabel}`
+          : "Saque grátis após 24h";
 
   const loadWallet = async (mode: "initial" | "refresh" = "initial") => {
     if (!sessionToken) {
@@ -364,9 +336,7 @@ export function Wallet() {
                   className="inline-flex min-w-0 items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   <Clock3 className="h-4 w-4" />
-                  {isWithdrawingMode === "standard"
-                    ? "Solicitando saque..."
-                    : "Saque grátis após 24h"}
+                  {standardWithdrawalLabel}
                 </button>
               </div>
             ) : (
@@ -408,102 +378,183 @@ export function Wallet() {
         </section>
 
         <section className="worqo-section">
-          <div className="grid grid-cols-2 gap-3">
-            {balanceCards.map(({ amountCents, id }) => {
-              const panel = walletBalancePanelContent[id];
-              const isOpen = openBalancePanel === id;
-
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() =>
-                    setOpenBalancePanel((current) => (current === id ? null : id))
-                  }
-                  aria-expanded={isOpen}
-                  className={`worqo-flat-panel min-w-0 px-3.5 py-3.5 text-left transition ${
-                    isOpen ? panel.tone : "border-blue-100 bg-white text-slate-700"
-                  }`}
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] opacity-90">
-                    {panel.label}
-                  </p>
-                  <p className="mt-2 text-base font-bold leading-tight text-slate-900 sm:text-xl">
-                    {formatCurrencyAmount(amountCents / 100)}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-
-          <AnimatePresence initial={false}>
-            {openBalancePanel ? (
-              <motion.div
-                key={openBalancePanel}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                className="mt-4 worqo-flat-panel worqo-flat-panel--blue px-4 py-3 text-sm font-semibold text-slate-900"
-              >
-                {walletBalancePanelContent[openBalancePanel].title}
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </section>
-
-        <section className="worqo-section">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-blue-600">
-              Histórico de saques
+              Histórico
             </p>
-            <h2 className="mt-2 text-xl font-bold text-slate-900">Saques Pix realizados</h2>
+            <h2 className="mt-2 text-xl font-bold text-slate-900">Entradas e saques</h2>
           </div>
 
-          {isLoading ? (
-            <div className="mt-5 worqo-flat-panel px-4 py-8 text-center text-sm text-slate-500">
-              Carregando saques...
-            </div>
-          ) : wallet.recentWithdrawals.length > 0 ? (
-            <div className="mt-5 worqo-divider-list">
-              {wallet.recentWithdrawals.map((withdrawal) => (
-                <div key={withdrawal.id} className="worqo-list-row min-w-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900">
-                        {formatCurrencyAmount(withdrawal.amountCents / 100)}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Status: {getWithdrawalStatusLabel(withdrawal)}
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setHistoryModal("entries")}
+              className="worqo-flat-panel flex min-h-24 flex-col items-start justify-between px-4 py-4 text-left transition active:scale-[0.98]"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+                <DollarSign className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block text-sm font-bold text-slate-900">Entradas</span>
+                <span className="mt-1 block text-xs font-semibold text-slate-400">
+                  Valores liberados
+                </span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setHistoryModal("withdrawals")}
+              className="worqo-flat-panel flex min-h-24 flex-col items-start justify-between px-4 py-4 text-left transition active:scale-[0.98]"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+                <Download className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block text-sm font-bold text-slate-900">Saques</span>
+                <span className="mt-1 block text-xs font-semibold text-slate-400">
+                  Pix realizados
+                </span>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <AnimatePresence>
+          {historyModal ? (
+            <motion.div
+              className="fixed inset-0 z-[120] flex items-end justify-center bg-slate-950/30 px-3 pb-3"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <motion.div
+                initial={{ y: 28, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 24, opacity: 0 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="max-h-[82vh] w-full max-w-md overflow-hidden rounded-[28px] bg-white"
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-600">
+                      Histórico
+                    </p>
+                    <h3 className="mt-1 text-lg font-black text-slate-900">
+                      {historyModal === "entries" ? "Entradas" : "Saques"}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryModal(null)}
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-50 text-slate-500"
+                    aria-label="Fechar histórico"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="max-h-[66vh] overflow-y-auto px-5 py-5">
+                  {historyModal === "entries" ? (
+                    isLoading ? (
+                      <div className="worqo-flat-panel px-4 py-8 text-center text-sm text-slate-500">
+                        Carregando entradas...
+                      </div>
+                    ) : wallet.recentEntries.length > 0 ? (
+                      <div className="worqo-divider-list">
+                        {wallet.recentEntries.map((entry) => (
+                          <div key={entry.id} className="worqo-list-row min-w-0">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-bold text-slate-900">
+                                  {entry.description || entry.type}
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                  Cliente: {entry.requesterName}
+                                </p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                                {formatCurrencyAmount(entry.netAmountCents / 100)}
+                              </span>
+                            </div>
+                            <p className="mt-3 text-xs text-slate-500">
+                              Status: {getWalletEntryStatusLabel(entry)}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Serviço: {formatCurrencyAmount(entry.grossAmountCents / 100)}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Taxas: {formatCurrencyAmount(entry.feeAmountCents / 100)}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Entrada: {formatWalletDate(entry.releasedAt ?? entry.updatedAt) || "Não informado"}
+                            </p>
+                            {entry.freeWithdrawalAvailableAt ? (
+                              <p className="mt-1 text-xs font-semibold text-emerald-700">
+                                Saque grátis em: {formatWalletDate(entry.freeWithdrawalAvailableAt)}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="worqo-flat-panel px-4 py-8 text-center">
+                        <p className="text-sm font-semibold text-slate-700">
+                          Nenhuma entrada no histórico
+                        </p>
+                      </div>
+                    )
+                  ) : isLoading ? (
+                    <div className="worqo-flat-panel px-4 py-8 text-center text-sm text-slate-500">
+                      Carregando saques...
+                    </div>
+                  ) : wallet.recentWithdrawals.length > 0 ? (
+                    <div className="worqo-divider-list">
+                      {wallet.recentWithdrawals.map((withdrawal) => (
+                        <div key={withdrawal.id} className="worqo-list-row min-w-0">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900">
+                                {formatCurrencyAmount(withdrawal.amountCents / 100)}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Status: {getWithdrawalStatusLabel(withdrawal)}
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-blue-100 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                              {withdrawal.mode === "instant" ? "Imediato" : "Grátis após 24h"}
+                            </span>
+                          </div>
+
+                          <p className="mt-3 break-all text-xs text-slate-500">
+                            Destino: {withdrawal.pixKeyMasked}
+                          </p>
+                          {withdrawal.feeAmountCents > 0 ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              Taxa aplicada: {formatCurrencyAmount(withdrawal.feeAmountCents / 100)}
+                            </p>
+                          ) : null}
+                          <p className="mt-1 text-xs text-slate-500">
+                            Criado em: {formatWalletDate(withdrawal.createdAt) || "Não informado"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="worqo-flat-panel px-4 py-8 text-center">
+                      <p className="text-sm font-semibold text-slate-700">
+                        Nenhum saque no histórico
                       </p>
                     </div>
-                    <span className="rounded-full border border-blue-100 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-                      {withdrawal.mode === "instant" ? "Imediato" : "Grátis após 24h"}
-                    </span>
-                  </div>
-
-                  <p className="mt-3 break-all text-xs text-slate-500">
-                    Destino: {withdrawal.pixKeyMasked}
-                  </p>
-                  {withdrawal.feeAmountCents > 0 ? (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Taxa aplicada: {formatCurrencyAmount(withdrawal.feeAmountCents / 100)}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-xs text-slate-500">
-                    Criado em: {formatWalletDate(withdrawal.createdAt) || "Não informado"}
-                  </p>
+                  )}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-5 worqo-flat-panel px-4 py-8 text-center">
-              <p className="text-sm font-semibold text-slate-700">Nenhum saque no histórico</p>
-            </div>
-          )}
-        </section>
+              </motion.div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
     </ProfileSectionLayout>
   );
 }
+
 

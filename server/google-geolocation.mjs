@@ -1,4 +1,4 @@
-import { config } from "./config.mjs";
+﻿import { config } from "./config.mjs";
 import { HttpError } from "./utils.mjs";
 
 function resolveGoogleErrorMessage(payload) {
@@ -69,3 +69,4 @@ export async function geolocateWithGoogle() {
     },
   };
 }
+

@@ -434,7 +434,7 @@ function OverviewSection({
               ["Aguardando", dashboard?.supportOverview.waitingTickets ?? 0],
               ["Em atendimento", dashboard?.supportOverview.activeTickets ?? 0],
               ["Fechados", dashboard?.supportOverview.closedTickets ?? 0],
-              ["Última mensagem", formatDate(dashboard?.supportOverview.latestCustomerMessageAt ?? null, true)],
+              ["última mensagem", formatDate(dashboard?.supportOverview.latestCustomerMessageAt ?? null, true)],
             ]}
           />
         </CompactPanel>
@@ -860,7 +860,7 @@ function WalletSection({ withdrawals }: { withdrawals: AdminDashboard["withdrawa
                 <MoneyCard label="Bruto" amount={withdrawal.grossAmountCents} />
                 <MoneyCard label="Taxa" amount={withdrawal.feeAmountCents} />
               </div>
-              <p className="mt-3 text-xs text-slate-500">{withdrawal.mode === "instant" ? "Instantâneo" : "Padrão"} · {formatDate(withdrawal.createdAt, true)}</p>
+              <p className="mt-3 text-xs text-slate-500">{withdrawal.mode === "instant" ? "Instantâneo" : "Padrão"} em {formatDate(withdrawal.createdAt, true)}</p>
             </div>
           ))
         ) : (
@@ -876,7 +876,7 @@ function SystemSection({ health }: { health: AdminHealthSnapshot | null }) {
     <section className="grid gap-4 lg:grid-cols-2">
       <CompactPanel title="Integrações">
         <div className="flex flex-wrap gap-2">
-          <HealthChip label="Asaas" active={Boolean(health?.integrations.asaasConfigured)} />
+          <HealthChip label="Pagamentos" active={Boolean(health?.integrations.asaasConfigured)} />
           <HealthChip label="E-mail" active={Boolean(health?.integrations.emailConfigured)} />
           <HealthChip label="Maps" active={Boolean(health?.integrations.mapsConfigured)} />
           <HealthChip label="Push" active={Boolean(health?.integrations.fcmConfigured)} />
@@ -889,7 +889,7 @@ function SystemSection({ health }: { health: AdminHealthSnapshot | null }) {
           items={[
             ["Requests", health?.metrics.totalRequests ?? 0],
             ["Erros", health?.metrics.totalServerErrors ?? 0],
-            ["Relatórios", health?.metrics.clientReportsStored ?? 0],
+            ["Relatérios", health?.metrics.clientReportsStored ?? 0],
             ["Último erro", formatDate(health?.metrics.lastServerErrorAt ?? null, true)],
           ]}
         />
@@ -908,7 +908,7 @@ function SystemSection({ health }: { health: AdminHealthSnapshot | null }) {
                   </span>
                 </div>
                 <p className="mt-2 text-sm text-slate-300">{entry.message}</p>
-                <p className="mt-2 text-xs text-slate-500">{entry.pathname || "sem rota"} · {formatDate(entry.createdAt, true)}</p>
+                <p className="mt-2 text-xs text-slate-500">{entry.pathname || "sem rota"} é {formatDate(entry.createdAt, true)}</p>
               </div>
             ))
           ) : (
@@ -1156,7 +1156,7 @@ function RequestCard({
           <div className="mt-2 grid gap-1 text-sm text-slate-300">
             <p>Cliente: {request.requesterName}</p>
             <p>Profissional: {request.workerName ?? "Não assumido(a)"}</p>
-            <p>{formatDate(request.createdAt, true)} · {formatDate(request.updatedAt, true)}</p>
+            <p>{formatDate(request.createdAt, true)} é {formatDate(request.updatedAt, true)}</p>
           </div>
         </div>
         <div className="grid min-w-[240px] grid-cols-3 gap-2">
@@ -1194,3 +1194,4 @@ function RequestCard({
     </div>
   );
 }
+

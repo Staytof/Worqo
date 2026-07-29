@@ -5,8 +5,8 @@ import {
 } from "./serviceCatalog";
 import { supportInfo } from "./support";
 
-export const LEGAL_VERSION = "2026-06-18";
-export const LEGAL_LAST_UPDATED = "18/06/2026";
+export const LEGAL_VERSION = "2026-07-28";
+export const LEGAL_LAST_UPDATED = "28/07/2026";
 
 export type LegalSection = {
   id: string;
@@ -24,7 +24,7 @@ export const termsOfUseSections: LegalSection[] = [
     id: "termos-objeto",
     title: "1. Objeto do Worko e papel da plataforma",
     paragraphs: [
-      "O Worko é uma plataforma digital de aproximação entre pessoas que procuram serviços leves e profissionais independentes que desejam divulgar sua atuação por mapa, mural, perfil, chat, carteira, SAC e recursos de verificação.",
+      "O Worko é uma plataforma digital de aproximação entre Clientes que solicitam serviços locais e Prestadores(as) independentes que desejam receber pedidos, divulgar sua atuação, conversar pelo chat, gerenciar carteira, acessar SAC e usar recursos de verificação.",
       "O Worko não é empregador, tomador direto do serviço, seguradora, transportadora, fiador, representante legal, conselho profissional nem responsável técnico pelos serviços anunciados ou contratados entre usuários(as).",
     ],
     bullets: [
@@ -36,7 +36,7 @@ export const termsOfUseSections: LegalSection[] = [
     id: "termos-cadastro",
     title: "2. Cadastro, elegibilidade, login e sessão",
     paragraphs: [
-      "O(a) usuário(a) deve fornecer dados verdadeiros, atualizados, completos e de sua titularidade, incluindo nome, e-mail, telefone, data de nascimento, endereço e, quando aplicável, CPF e chave Pix.",
+      "O(a) usuário(a) deve fornecer dados verdadeiros, atualizados, completos e de sua titularidade, incluindo nome, e-mail, foto de rosto, endereço e, quando aplicável ao tipo de conta, telefone, data de nascimento, CPF, profissão, disponibilidade e chave Pix.",
       "Cada conta deve corresponder a uma pessoa real. Contas falsas, automatizadas, duplicadas, compartilhadas ou mantidas em nome de terceiro podem ser bloqueadas, limitadas ou encerradas.",
     ],
     bullets: [
@@ -55,7 +55,7 @@ export const termsOfUseSections: LegalSection[] = [
     bullets: [
       "Divergências entre nome, CPF, data de nascimento, chave Pix ou outros dados podem impedir verificações, liberar menos recursos ou bloquear funcionalidades.",
       "O(a) usuário(a) autoriza as validações cadastrais e antifraude estritamente necessárias para conta, pagamentos, carteira, suporte e segurança da plataforma.",
-      "Currículo, descrições, fotos, profissões, habilidades e qualquer informação publicada no perfil são de responsabilidade do(a) próprio(a) usuário(a).",
+      "Currículo, descrições, fotos, profissões, habilidades, disponibilidade e qualquer informação publicada no perfil são de responsabilidade do(a) próprio(a) usuário(a).",
     ],
   },
   {
@@ -88,26 +88,27 @@ export const termsOfUseSections: LegalSection[] = [
   },
   {
     id: "termos-conteúdo",
-    title: "6. Publicações, mural, chat, SAC e conduta",
+    title: "6. Pedidos, divulgações, chat, SAC e conduta",
     paragraphs: [
-      "O(a) usuário(a) é exclusivamente responsável por tudo o que publica, solicita, divulga, negocia, envia, armazena ou compartilha no mural, perfil, chat, comprovantes, avaliações, SAC e demais áreas do aplicativo.",
+      "O(a) usuário(a) é exclusivamente responsável por tudo o que publica, solicita, divulga, negocia, envia, armazena ou compartilha em pedidos, divulgações, perfil, chat, imagens, comprovantes, avaliações, SAC e demais áreas do aplicativo.",
       "O Worko pode aplicar filtros, registros operacionais, revisão de segurança e moderação para prevenir fraude, golpe, fuga de pagamento, assédio, spam, conteúdo proibido, abuso de plataforma e risco a usuários(as).",
     ],
     bullets: [
       "É proibido publicar conteúdo ilegal, enganoso, ofensivo, discriminatório, sexualmente explícito, violento, fraudulento, invasivo, com malware ou que viole direitos de terceiros.",
       "É proibido usar o app para golpes, lavagem de dinheiro, falsidade ideológica, assédio, phishing, spam, pirâmide, cobrança indevida ou qualquer atividade ilícita.",
       "É proibido enviar telefone, e-mail, redes sociais, links, chaves de contato ou sequências numéricas camufladas com o objetivo de tirar a negociação, o suporte ou o pagamento para fora do Worko.",
+      "Clientes podem fotografar pelo próprio chat o estado atual do serviço. O chat não permite escolher imagens antigas da galeria, e as fotos capturadas também podem ser monitoradas para segurança, moderação e análise de disputas.",
       "O SAC online segue fila de atendimento por ordem de chegada, pode exibir a quantidade de pessoas à frente e pode ser encerrado pelo(a) próprio(a) usuário(a) ou pelo atendimento quando o caso for concluído.",
       "O Worko pode remover publicações, ocultar conteúdo, limitar mensagens, congelar funcionalidades, encerrar tickets e suspender contas quando identificar descumprimento destes termos, risco, fraude ou ordem legal.",
     ],
   },
   {
     id: "termos-relação",
-    title: "7. Serviços, pagamentos internos, carteira, Asaas e comprovantes",
+    title: "7. Serviços, pagamentos internos, carteira e comprovantes",
     paragraphs: [
       "Orçamento, visita técnica, deslocamento, prazo, execução do serviço, garantia, nota fiscal, tributos, reembolso, regularidade profissional e cumprimento do combinado são assumidos diretamente pelos(as) usuários(as) envolvidos(as) na relação.",
-      "Quando o pagamento é realizado dentro do Worko, a operação pode usar infraestrutura terceirizada de apoio, inclusive o Asaas, com geração de cobrança Pix, QR Code, código Pix para copiar e colar, conciliação de status, notificações internas e comprovantes.",
-      "No fluxo atual da plataforma, o total exibido ao contratante pode incluir taxa de serviço do Worko de 10% sobre o valor do atendimento e taxa fixa operacional do Asaas de R$ 1,99 associada ao recebimento interno, quando aplicável. Os valores efetivos devem ser exibidos na própria tela de pagamento antes da confirmação.",
+      "Quando o pagamento é realizado dentro do Worko, a operação pode usar infraestrutura terceirizada de pagamento, com geração de cobrança Pix, QR Code, código Pix para copiar e colar, conciliação de status, notificações internas e comprovantes.",
+      "No fluxo atual da plataforma, o total exibido ao contratante pode incluir taxa de serviço do Worko de 10% sobre o valor do atendimento e taxa fixa operacional de R$ 1,99 associada ao recebimento interno, quando aplicável. Os valores efetivos devem ser exibidos na própria tela de pagamento antes da confirmação.",
       "Valores liberados para o(a) profissional podem passar primeiro pela carteira do app e depender de confirmação do atendimento, status do provedor, regras antifraude, histórico do pedido, validação de conta e disponibilidade operacional do parceiro de pagamento.",
     ],
     bullets: [
@@ -138,7 +139,7 @@ export const termsOfUseSections: LegalSection[] = [
     bullets: [
       "Não compartilhe senha, código, token, dados bancários sensíveis ou documentos além do necessário sem confirmar a identidade da outra parte.",
       "Prefira validar endereço, horário, escopo, valor, forma de acesso e detalhes do atendimento antes do deslocamento.",
-      "Em caso de emergência, ameaça, acidente ou crime, acione imediatamente os serviços públicos competentes. O Worko não substitui atendimento emergêncial.",
+      "Em caso de emergência, ameaça, acidente ou crime, acione imediatamente os serviços públicos competentes. O Worko não substitui atendimento emergencial.",
     ],
   },
   {
@@ -188,12 +189,12 @@ export const privacySections: LegalSection[] = [
     id: "privacidade-dados",
     title: "2. Dados pessoais e dados técnicos tratados",
     paragraphs: [
-      "O Worko pode tratar dados cadastrais e de identificação, dados de perfil e verificação, informações de pedidos e divulgações, mensagens de chat e SAC, dados de pagamento e saque, além de metadados técnicos necessários ao funcionamento e à segurança do app.",
+      "O Worko pode tratar dados cadastrais e de identificação, dados de perfil e verificação, informações de pedidos e divulgações, mensagens de chat e SAC, imagens enviadas pelo(a) usuário(a), dados de pagamento e saque, além de metadados técnicos necessários ao funcionamento e à segurança do app.",
     ],
     bullets: [
       "Dados cadastrais: nome, e-mail, telefone, data de nascimento, endereço, CPF, avatar e identificadores internos da conta.",
-      "Dados de perfil: biografia, profissão, habilidades, disponibilidade, chave Pix e demais dados que o(a) próprio(a) usuário(a) publicar ou editar.",
-      "Dados de uso e relacionamento: pedidos no mapa, divulgações, chats, avaliações, histórico de atendimento, tickets do SAC, fila de atendimento e mensagens trocadas com o suporte.",
+      "Dados de perfil: foto de rosto, biografia, profissão, habilidades, disponibilidade, chave Pix e demais dados que o(a) próprio(a) usuário(a) publicar ou editar.",
+      "Dados de uso e relacionamento: pedidos no mapa, divulgações, chats, imagens enviadas por clientes, avaliações, histórico de atendimento, tickets do SAC, fila de atendimento e mensagens trocadas com o suporte.",
       "Dados de pagamento e carteira: valor do serviço, taxa, status de cobrança, QR Code Pix, código Pix para copiar e colar, recibos, comprovantes em PDF, histórico de saque e status de conciliação.",
       "Dados de verificação e antifraude: confirmação de e-mail, validação de CPF, compatibilidade da chave Pix, registros de autenticação, sessões ativas e sinais de risco operacional.",
       "Dados técnicos: data e hora de uso, identificadores de sessão, versão do app, plataforma, token de notificação push, rótulos de dispositivo, preferências locais, registros de erro do cliente e, quando aplicável, metadados de infraestrutura e acesso associados a segurança da aplicação.",
@@ -210,7 +211,7 @@ export const privacySections: LegalSection[] = [
       "Criar, manter, autenticar, recuperar e proteger contas de usuários(as).",
       "Executar verificações de e-mail, CPF, chave Pix e segurança de sessão.",
       "Exibir mapa, proximidade, área atendida e conteúdo geográfico do app.",
-      "Permitir mural, divulgação, pedidos, conversas, histórico de atendimento e avaliações.",
+      "Permitir divulgações, pedidos, conversas, envio de imagens por clientes, histórico de atendimento e avaliações.",
       "Gerar, conciliar e registrar pagamentos, comprovantes, carteira interna e saques Pix.",
       "Atender tickets do SAC, organizar fila de suporte, responder demandas e registrar histórico do atendimento.",
       "Enviar notificações operacionais, alertas de pagamento, liberação de saque, mensagens de chat e avisos relevantes do produto.",
@@ -223,7 +224,7 @@ export const privacySections: LegalSection[] = [
     title: "4. Bases legais utilizadas",
     paragraphs: [
       "O Worko trata dados pessoais, conforme o caso concreto, com fundamento na execução dos termos e de procedimentos preliminares relacionados ao uso da plataforma, no cumprimento de obrigação legal ou regulatória, no exercício regular de direitos, na prevenção a fraude, na segurança do titular e de terceiros e, quando necessário, em consentimento ou permissão específica do dispositivo.",
-      "Quando a funcionalidade depender de permissão do aparelho, como geolocalização em tempo real ou notificações push, o(a) usuário(a) pode negar ou revogar a permissão, ciente de que algumas funções podem ficar limitadas.",
+      "Quando a funcionalidade depender de permissão do aparelho, como geolocalização em tempo real, notificações push, câmera ou acesso seletivo à galeria de fotos, o(a) usuário(a) pode negar ou revogar a permissão, ciente de que algumas funções podem ficar limitadas.",
     ],
   },
   {
@@ -234,7 +235,7 @@ export const privacySections: LegalSection[] = [
     ],
     bullets: [
       "Provedores de mapas e geolocalização, como serviços da Google Maps Platform.",
-      "Prestadores(as) de cobrança, conciliação, carteira operacional, Pix, comprovantes e saques, incluindo o Asaas e serviços correlatos necessários ao fluxo de pagamento.",
+      "Prestadores(as) de cobrança, conciliação, carteira operacional, Pix, comprovantes e saques, incluindo provedores de pagamento e serviços correlatos necessários ao fluxo de pagamento.",
       "Prestadores(as) de e-mail, autenticação, envio de mensagens, recuperação de conta e comunicações transacionais.",
       "Prestadores(as) de verificação cadastral e de CPF, conforme a configuração ativa do app e as fontes oficiais ou bases consultadas pelo provedor contratado.",
       "Prestadores(as) de notificação push e infraestrutura correlata, como Firebase Cloud Messaging e serviços Google associados ao envio de alertas para o dispositivo.",
@@ -253,7 +254,9 @@ export const privacySections: LegalSection[] = [
     bullets: [
       "O Worko pode armazenar localmente preferências de tema, estado da sessão, token push, identificadores de notificações entregues e dados temporários de uso do app.",
       "A permissão de localização é usada para mapa, proximidade, busca territorial, posição atual e recursos relacionados a pedidos e divulgações.",
-      "A revogação de permissão pode impedir parte da experiência, mas não afeta necessáriamente o cadastro básico do(a) usuário(a).",
+      "A permissão de fotos é usada somente para escolher a foto de perfil. No chat, clientes podem enviar apenas uma nova foto capturada pela câmera naquele momento; a galeria não é oferecida para esse envio.",
+      "A permissão de câmera é solicitada antes da captura de uma imagem no chat. O Worko recebe apenas a foto confirmada pelo(a) cliente, conforme as permissões do sistema.",
+      "A revogação de permissão pode impedir parte da experiência, mas não afeta necessariamente o cadastro básico do(a) usuário(a).",
     ],
   },
   {
@@ -300,3 +303,4 @@ export const privacySections: LegalSection[] = [
     ],
   },
 ];
+

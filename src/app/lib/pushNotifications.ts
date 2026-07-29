@@ -1,3 +1,4 @@
+import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import {
   PushNotifications,
@@ -11,6 +12,7 @@ import { isNativeAppRuntime } from "./nativeRuntime";
 
 const PUSH_CHANNEL_ID = "worqo-general";
 const PUSH_TOKEN_STORAGE_KEY = "worqo-native-fcm-token-v1";
+const PUSH_REGISTRATION_RETRY_DELAYS_MS = [0, 2_000, 8_000, 30_000];
 
 type InitializePushNotificationsOptions = {
   sessionToken: string;
@@ -111,12 +113,60 @@ export async function initializeNativePushNotifications({
     return () => undefined;
   }
 
+  let disposed = false;
+  let latestToken = readStoredPushToken();
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearRetryTimer = () => {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
+
+  const registerTokenWithRetry = async (token: string, attempt = 0): Promise<void> => {
+    const normalizedToken = String(token ?? "").trim();
+
+    if (disposed || !normalizedToken) {
+      return;
+    }
+
+    latestToken = normalizedToken;
+    writeStoredPushToken(normalizedToken);
+    clearRetryTimer();
+
+    try {
+      await sendPushTokenToServer(sessionToken, normalizedToken, appVersion);
+    } catch (error) {
+      const nextAttempt = attempt + 1;
+
+      if (nextAttempt >= PUSH_REGISTRATION_RETRY_DELAYS_MS.length || disposed) {
+        console.warn("Não foi possível vincular este aparelho às notificações do Worko.", error);
+        return;
+      }
+
+      retryTimer = setTimeout(() => {
+        void registerTokenWithRetry(normalizedToken, nextAttempt);
+      }, PUSH_REGISTRATION_RETRY_DELAYS_MS[nextAttempt]);
+    }
+  };
+
+  const refreshStoredToken = () => {
+    const storedToken = readStoredPushToken() || latestToken;
+
+    if (storedToken) {
+      void registerTokenWithRetry(storedToken);
+      return;
+    }
+
+    void PushNotifications.register().catch((error) => {
+      console.warn("Não foi possível registrar este aparelho para notificações.", error);
+    });
+  };
+
   const listenerHandles = await Promise.all([
     PushNotifications.addListener("registration", async (token: Token) => {
-      writeStoredPushToken(token.value);
-      await sendPushTokenToServer(sessionToken, token.value, appVersion).catch((error) => {
-        console.warn("Não foi possível registrar o token FCM no servidor.", error);
-      });
+      await registerTokenWithRetry(token.value);
     }),
     PushNotifications.addListener("registrationError", (error: RegistrationError) => {
       onRegistrationError?.(error);
@@ -133,13 +183,25 @@ export async function initializeNativePushNotifications({
         await onNotificationAction?.(notification);
       }
     ),
+    App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) {
+        refreshStoredToken();
+      }
+    }),
   ]);
 
+  const handleOnline = () => refreshStoredToken();
+  window.addEventListener("online", handleOnline);
+
   await PushNotifications.register().catch((error) => {
-    console.warn("Não foi possível registrar o dispositivo no FCM.", error);
+    console.warn("Não foi possível registrar este aparelho para notificações.", error);
   });
 
   return () => {
+    disposed = true;
+    clearRetryTimer();
+    window.removeEventListener("online", handleOnline);
+
     for (const handle of listenerHandles) {
       void handle.remove().catch(() => undefined);
     }

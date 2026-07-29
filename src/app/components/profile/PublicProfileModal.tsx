@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Briefcase, Clock3, ShieldCheck, Sparkles, Star, X } from "lucide-react";
 import { motion } from "motion/react";
 import { apiRequest } from "../../api/client";
@@ -490,19 +490,35 @@ export function PublicProfileModal({
                       {visibleProfile.recentReviews.map((review) => (
                         <div key={review.id} className="worqo-list-row">
                           <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">
-                                {getFirstNames(review.reviewerName, 2)}
-                              </p>
-                              <div className="mt-2 flex items-center gap-1 text-amber-400">
-                                {Array.from({ length: 5 }).map((_, index) => (
-                                  <Star
-                                    key={index}
-                                    className={`h-4 w-4 ${
-                                      index < review.rating ? "fill-amber-400" : ""
-                                    }`}
+                            <div className="flex min-w-0 items-start gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-xs font-black text-blue-600">
+                                {review.reviewerAvatar ? (
+                                  <img
+                                    src={review.reviewerAvatar}
+                                    alt={review.reviewerName}
+                                    className="h-full w-full object-cover"
                                   />
-                                ))}
+                                ) : (
+                                  getInitials(review.reviewerName)
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-900">
+                                  {getFirstNames(review.reviewerName, 2)}
+                                </p>
+                                <p className="mt-0.5 truncate text-xs font-semibold text-blue-600">
+                                  {review.serviceTitle || "Atendimento Worko"}
+                                </p>
+                                <div className="mt-2 flex items-center gap-1 text-amber-400">
+                                  {Array.from({ length: 5 }).map((_, index) => (
+                                    <Star
+                                      key={index}
+                                      className={`h-4 w-4 ${
+                                        index < review.rating ? "fill-amber-400" : ""
+                                      }`}
+                                    />
+                                  ))}
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -532,5 +548,6 @@ export function PublicProfileModal({
     </div>
   );
 }
+
 
 

@@ -13,7 +13,9 @@ import {
   storeClientErrorReport,
 } from "./observability.mjs";
 import {
+  getPushNotificationStatusForUser,
   registerPushTokenForUser,
+  sendPushTestForUser,
   unregisterPushTokenForUser,
 } from "./push-notifications.mjs";
 import { assertRateLimit } from "./rate-limit.mjs";
@@ -65,12 +67,16 @@ import {
   deleteServiceRequestForUser,
   declineAssignedServiceRequestForUser,
   getActiveServiceRequestForUser,
+  getPendingClientReviewForWorker,
+  listCompletedServiceRequestsForUser,
   listPublicServiceRequests,
   listServiceChatsForUser,
   markServiceChatReadForUser,
   markServiceRequestPaidForUser,
+  markServiceRequestWorkerArrivedForUser,
   openServiceRequestDisputeForUser,
   releaseServiceRequestPaymentForUser,
+  reviewClientForCompletedServiceForUser,
   resolveServiceRequestDisputeForAdmin,
   sendServiceChatMessageForUser,
   startServiceRequestFromCommunityChatForUser,
@@ -454,7 +460,10 @@ const server = http.createServer(async (request, response) => {
         redirect(
           response,
           buildGoogleAuthReturnUrl({
-            googleToken: session.token,
+            googleToken: session.token || undefined,
+            googlePending: session.pendingVerification
+              ? JSON.stringify(session.pendingVerification)
+              : undefined,
             googleRemember: session.rememberMe ? "1" : "0",
           }, session.returnTo)
         );
@@ -545,6 +554,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/me/push/status") {
+      const { user } = requireSessionUser(request);
+      json(response, 200, {
+        push: getPushNotificationStatusForUser(user.id),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/me/push/test") {
+      const { user } = requireSessionUser(request);
+      const result = await sendPushTestForUser(user.id);
+      json(response, result.ok ? 200 : 503, result);
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/me/cpf/verify") {
       const { user } = requireSessionUser(request);
       const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
@@ -564,6 +588,20 @@ const server = http.createServer(async (request, response) => {
       const { user } = requireSessionUser(request);
       const activeRequest = getActiveServiceRequestForUser(user.id);
       json(response, 200, { request: activeRequest });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/service-requests/history") {
+      const { user } = requireSessionUser(request);
+      const requests = listCompletedServiceRequestsForUser(user.id);
+      json(response, 200, { requests });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/service-requests/pending-client-review") {
+      const { user } = requireSessionUser(request);
+      const pendingRequest = getPendingClientReviewForWorker(user.id);
+      json(response, 200, { request: pendingRequest });
       return;
     }
 
@@ -826,6 +864,21 @@ const server = http.createServer(async (request, response) => {
     if (
       request.method === "PATCH" &&
       url.pathname.startsWith("/api/service-requests/") &&
+      url.pathname.endsWith("/worker-arrived")
+    ) {
+      const { user } = requireSessionUser(request);
+      const requestId = url.pathname
+        .replace("/api/service-requests/", "")
+        .replace("/worker-arrived", "")
+        .replace(/\/$/, "");
+      const result = markServiceRequestWorkerArrivedForUser(user.id, requestId);
+      json(response, 200, result);
+      return;
+    }
+
+    if (
+      request.method === "PATCH" &&
+      url.pathname.startsWith("/api/service-requests/") &&
       url.pathname.endsWith("/payment-status")
     ) {
       const { user } = requireSessionUser(request);
@@ -917,6 +970,22 @@ const server = http.createServer(async (request, response) => {
         .replace(/\/$/, "");
       const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
       const result = await releaseServiceRequestPaymentForUser(user.id, requestId, body);
+      json(response, 200, result);
+      return;
+    }
+
+    if (
+      request.method === "PATCH" &&
+      url.pathname.startsWith("/api/service-requests/") &&
+      url.pathname.endsWith("/review-client")
+    ) {
+      const { user } = requireSessionUser(request);
+      const requestId = url.pathname
+        .replace("/api/service-requests/", "")
+        .replace("/review-client", "")
+        .replace(/\/$/, "");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const result = reviewClientForCompletedServiceForUser(user.id, requestId, body);
       json(response, 200, result);
       return;
     }
@@ -1128,4 +1197,5 @@ startBackgroundJobs();
 server.listen(config.port, () => {
   console.log(`Worko auth API disponível em http://localhost:${config.port}`);
 });
+
 

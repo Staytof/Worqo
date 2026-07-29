@@ -1,4 +1,4 @@
-import { HttpError } from "./utils.mjs";
+﻿import { HttpError } from "./utils.mjs";
 
 const buckets = new Map();
 
@@ -39,4 +39,5 @@ export function assertRateLimit(scope, key, { max, windowMs, message }) {
 
   currentBucket.count += 1;
 }
+
 

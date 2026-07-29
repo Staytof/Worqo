@@ -14,19 +14,22 @@ import { formatDelayTolerance, formatServiceDate } from "../../utils/helpers";
 import { ServiceTimeline } from "./ServiceTimeline";
 
 function getVisibleServiceLocation(request: ActiveServiceRequest) {
-  if (!request.details) {
-    return "";
-  }
-
-  if (request.currentUserRole !== "requester") {
+  if (request.currentUserRole !== "requester" && !request.exactLocationVisible) {
     return "Local protegido pelo Worko";
   }
 
-  if (request.details.locationMode === "residence") {
-    return request.details.address || "Endereço do perfil";
+  if (!request.details) {
+    return request.locationLabel || "";
   }
 
-  return request.details.address || "Local combinado no chat";
+  const visibleAddress =
+    request.details.address || request.details.locationLabel || request.locationLabel || "";
+
+  if (request.details.locationMode === "residence") {
+    return visibleAddress || "Endereço do perfil";
+  }
+
+  return visibleAddress || "Local combinado no chat";
 }
 
 function getServiceStatusLabel(request: ActiveServiceRequest) {
@@ -89,6 +92,10 @@ function getPrimaryActionLabel(request: ActiveServiceRequest) {
   return "Abrir fluxo";
 }
 
+function hasWorkerArrivalEvent(request: ActiveServiceRequest) {
+  return request.timeline.some((event) => event.kind === "worker-arrived");
+}
+
 type ActiveRequestSheetProps = {
   request: ActiveServiceRequest | null;
   isOpen: boolean;
@@ -101,6 +108,8 @@ type ActiveRequestSheetProps = {
   onCancelRequest: () => void;
   onAcceptWorker: () => void;
   onDeclineWorker: (options?: { blockWorkerForTenMinutes?: boolean }) => void;
+  isMarkingWorkerArrived: boolean;
+  onMarkWorkerArrived: () => Promise<{ ok: boolean; error?: string }>;
   onReleasePayment: (payload: ServiceReviewPayload) => Promise<{ ok: boolean; error?: string }>;
   onOpenDispute: (reason: string) => Promise<{ ok: boolean; error?: string }>;
 };
@@ -117,6 +126,8 @@ export function ActiveRequestSheet({
   onCancelRequest,
   onAcceptWorker,
   onDeclineWorker,
+  isMarkingWorkerArrived,
+  onMarkWorkerArrived,
   onReleasePayment,
   onOpenDispute,
 }: ActiveRequestSheetProps) {
@@ -145,7 +156,14 @@ export function ActiveRequestSheet({
     return null;
   }
 
+  const hasWorkerArrived = hasWorkerArrivalEvent(request);
+
   const handleReleasePayment = async () => {
+    if (!hasWorkerArrivalEvent(request)) {
+      setReviewError("Confirme a chegada do(a) prestador(a) antes de liberar o pagamento.");
+      return;
+    }
+
     if (reviewRating < 1 || reviewRating > 5) {
       setReviewError("Selecione uma nota de 1 a 5 estrelas.");
       return;
@@ -173,6 +191,15 @@ export function ActiveRequestSheet({
     setReviewRating(0);
     setReviewComment("");
     onClose();
+  };
+
+  const handleMarkWorkerArrived = async () => {
+    setReviewError("");
+    const result = await onMarkWorkerArrived();
+
+    if (!result.ok) {
+      setReviewError(result.error ?? "Não conseguimos registrar a chegada agora.");
+    }
   };
 
   const handleOpenDispute = async () => {
@@ -406,20 +433,47 @@ export function ActiveRequestSheet({
 
                     {request.status === "confirmed" &&
                     request.currentUserRole === "requester" ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDisputeError("");
-                          setIsDisputeFormOpen(false);
-                          setReviewError("");
-                          setIsReviewFormOpen((current) => !current);
-                        }}
-                        disabled={isReleasingPayment}
-                        className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
-                        aria-label={isReviewFormOpen ? "Fechar avaliação" : "Liberar pagamento"}
-                      >
-                        {isReviewFormOpen ? <X className="mx-auto h-4 w-4" /> : "Liberar pagamento"}
-                      </button>
+                      <>
+                        {hasWorkerArrived ? (
+                          <span className="inline-flex items-center justify-center gap-2 rounded-[24px] bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Chegada registrada
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void handleMarkWorkerArrived()}
+                            disabled={isMarkingWorkerArrived}
+                            className="rounded-[24px] bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-70"
+                          >
+                            {isMarkingWorkerArrived
+                              ? "Registrando..."
+                              : "O(a) prestador(a) chegou?"}
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!hasWorkerArrived) {
+                              setReviewError(
+                                "Confirme a chegada do(a) prestador(a) antes de liberar o pagamento."
+                              );
+                              return;
+                            }
+
+                            setDisputeError("");
+                            setIsDisputeFormOpen(false);
+                            setReviewError("");
+                            setIsReviewFormOpen((current) => !current);
+                          }}
+                          disabled={isReleasingPayment || !hasWorkerArrived}
+                          className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                          aria-label={isReviewFormOpen ? "Fechar avaliação" : "Liberar pagamento"}
+                        >
+                          {isReviewFormOpen ? <X className="mx-auto h-4 w-4" /> : "Liberar pagamento"}
+                        </button>
+                      </>
                     ) : null}
 
                     {request.status === "searching" ? (
@@ -572,4 +626,5 @@ export function ActiveRequestSheet({
     </AnimatePresence>
   );
 }
+
 

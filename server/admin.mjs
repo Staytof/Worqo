@@ -1,4 +1,4 @@
-import { db } from "./db.mjs";
+﻿import { db } from "./db.mjs";
 import { isAdminEmail } from "./config.mjs";
 import { HttpError } from "./utils.mjs";
 
@@ -12,7 +12,7 @@ const LIVE_REQUEST_STATUSES = new Set([
   "confirmed",
 ]);
 const OPEN_MAP_REQUEST_STATUSES = new Set(["searching", "assigned"]);
-const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
+const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED"]);
 const PENDING_WITHDRAWAL_STATUSES = new Set([
   "PENDING",
   "BANK_PROCESSING",
@@ -459,4 +459,5 @@ export function assertAdminUser(user) {
     throw new HttpError(403, "Este acesso é restrito ao painel administrativo do Worko.");
   }
 }
+
 

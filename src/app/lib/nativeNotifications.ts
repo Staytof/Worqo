@@ -265,3 +265,4 @@ export async function deliverNativeNotifications(notifications: AppNotification[
     ...nextNotifications.map((notification) => notification.id),
   ]);
 }
+

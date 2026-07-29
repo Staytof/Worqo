@@ -334,3 +334,4 @@ export function Register() {
     </motion.div>
   );
 }
+

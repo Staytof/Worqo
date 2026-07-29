@@ -10,6 +10,23 @@ function formatTimelineTime(createdAt: string) {
   }).format(new Date(createdAt));
 }
 
+function repairMojibake(value: string) {
+  let text = value;
+
+  for (let attempt = 0; attempt < 2 && /[\u00c3\u00c2\ufffd]/.test(text); attempt += 1) {
+    const bytes = Uint8Array.from(Array.from(text, (char) => char.charCodeAt(0) & 0xff));
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+
+    if (!decoded || decoded === text) {
+      break;
+    }
+
+    text = decoded;
+  }
+
+  return text.replace(/\uFFFD/g, "");
+}
+
 function getTimelineIcon(kind: string) {
   if (kind.includes("payment") || kind.includes("withdrawal")) {
     return Wallet;
@@ -49,6 +66,8 @@ export function ServiceTimeline({
         {timeline.map((event, index) => {
           const Icon = getTimelineIcon(event.kind);
           const isLast = index === timeline.length - 1;
+          const titleText = repairMojibake(event.title);
+          const descriptionText = repairMojibake(event.description);
 
           return (
             <div key={event.id} className="flex items-start gap-3">
@@ -61,13 +80,13 @@ export function ServiceTimeline({
 
               <div className="min-w-0 flex-1 pb-2">
                 <div className="flex items-start justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-900">{event.title}</p>
+                  <p className="text-sm font-semibold text-slate-900">{titleText}</p>
                   <span className="shrink-0 text-[11px] text-slate-400">
                     {formatTimelineTime(event.createdAt)}
                   </span>
                 </div>
                 <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  {event.description}
+                  {descriptionText}
                 </p>
               </div>
             </div>

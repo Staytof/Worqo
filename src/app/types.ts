@@ -50,6 +50,8 @@ export type ServiceReview = {
   comment: string;
   reviewerId: string;
   reviewerName: string;
+  reviewerAvatar: string | null;
+  serviceTitle: string;
   createdAt: string;
 };
 
@@ -292,6 +294,10 @@ export type ActiveServiceRequest = {
     delayToleranceMinutes: number;
     locationMode: ServiceLocationMode;
     address: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    accuracy?: number | null;
+    locationLabel?: string | null;
   } | null;
 };
 
@@ -302,6 +308,7 @@ export type AppNotification = {
     | "chat-request"
     | "chat-request-declined"
     | "support-message"
+    | "service-interest"
     | "service-cancelled"
     | "requester-continued-search"
     | "service-accepted"
@@ -378,6 +385,10 @@ export type ServiceDetailsPayload = {
   delayToleranceMinutes: number;
   locationMode: ServiceLocationMode;
   address: string;
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  locationLabel?: string | null;
 };
 
 export type ServiceReviewPayload = {
@@ -406,6 +417,7 @@ export type WorkerWalletEntry = {
   createdAt: string;
   updatedAt: string;
   releasedAt: string | null;
+  freeWithdrawalAvailableAt?: string | null;
 };
 
 export type WorkerWithdrawalRecord = {
@@ -441,6 +453,7 @@ export type WorkerWalletSummary = {
   providerAvailableBalanceCents: number | null;
   instantAvailableNowCents: number;
   standardAvailableNowCents: number;
+  nextFreeWithdrawalAvailableAt?: string | null;
   providerBalanceShortfallCents: number;
   providerBalanceMessage: string | null;
   providerBalanceSyncedAt: string | null;

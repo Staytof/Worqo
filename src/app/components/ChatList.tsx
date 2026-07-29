@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Camera as NativeCamera,
+  CameraResultType,
+  CameraSource,
+} from "@capacitor/camera";
+import {
   ArrowLeft,
   Camera,
   Check,
@@ -16,6 +21,8 @@ import { motion } from "motion/react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
 import { useErrorToast } from "../hooks/useErrorToast";
+import { requestNativeCameraPermission } from "../lib/nativeMediaPermissions";
+import { isNativeAppRuntime } from "../lib/nativeRuntime";
 import type { ActiveServiceRequest, PublicUserProfile } from "../types";
 import {
   formatDelayTolerance,
@@ -261,7 +268,8 @@ export function ChatList() {
     fallbackProfile: Partial<PublicUserProfile> & { fullName: string };
   } | null>(null);
 
-  const visibleChats = chats.filter(
+  const chatItems = Array.isArray(chats) ? chats : [];
+  const visibleChats = chatItems.filter(
     (chat) =>
       chat.messages.length > 0 ||
       chat.id === activeChatId
@@ -278,7 +286,7 @@ export function ChatList() {
     );
   });
 
-  const activeChat = chats.find((chat) => chat.id === activeChatId) ?? null;
+  const activeChat = chatItems.find((chat) => chat.id === activeChatId) ?? null;
   const isActiveServiceChat =
     Boolean(activeChat?.serviceRequestId) && activeServiceRequest?.chatId === activeChat?.id;
   const isPendingProviderContact =
@@ -357,6 +365,74 @@ export function ChatList() {
       );
     } finally {
       setIsSendingImage(false);
+    }
+  };
+
+  const sendCapturedImage = async (imageUrl: string) => {
+    if (!activeChat || isSendingImage) {
+      return;
+    }
+
+    setIsSendingImage(true);
+    setMessageError("");
+
+    try {
+      const result = await sendMessage(activeChat.id, {
+        messageType: "image",
+        imageUrl,
+      });
+
+      if (!result.ok) {
+        setMessageError(result.error ?? "Não conseguimos enviar sua foto agora.");
+      }
+    } catch (error) {
+      setMessageError(
+        error instanceof Error ? error.message : "Não conseguimos enviar sua foto agora."
+      );
+    } finally {
+      setIsSendingImage(false);
+    }
+  };
+
+  const handleChooseChatImage = async () => {
+    if (!canSendChatImages) {
+      setMessageError("Apenas clientes podem enviar imagens no chat.");
+      return;
+    }
+
+    if (!isNativeAppRuntime()) {
+      imageInputRef.current?.click();
+      return;
+    }
+
+    const allowed = await requestNativeCameraPermission();
+
+    if (!allowed) {
+      setMessageError("Permita o uso da câmera para tirar uma foto do serviço.");
+      return;
+    }
+
+    try {
+      const photo = await NativeCamera.getPhoto({
+        source: CameraSource.Camera,
+        resultType: CameraResultType.DataUrl,
+        quality: 76,
+        width: 960,
+        height: 960,
+        correctOrientation: true,
+        allowEditing: false,
+        saveToGallery: false,
+      });
+
+      if (photo.dataUrl) {
+        await sendCapturedImage(photo.dataUrl);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+      if (!message.includes("cancel") && !message.includes("canceled")) {
+        setMessageError("Não conseguimos abrir a câmera agora. Tente novamente.");
+      }
     }
   };
 
@@ -468,7 +544,8 @@ export function ChatList() {
     removeChatThread(chatId);
   };
 
-  const chatDeleteConfirmation = chats.find((chat) => chat.id === chatDeleteConfirmationId) ?? null;
+  const chatDeleteConfirmation =
+    chatItems.find((chat) => chat.id === chatDeleteConfirmationId) ?? null;
 
   const handleAcceptContactRequest = async () => {
     if (!activeChat || contactRequestAction) {
@@ -1020,6 +1097,7 @@ export function ChatList() {
                   ref={imageInputRef}
                   type="file"
                   accept="image/*"
+                  capture="environment"
                   onChange={(event) => void handleSendImage(event)}
                   className="hidden"
                   aria-hidden="true"
@@ -1037,15 +1115,15 @@ export function ChatList() {
                     <>
                       <button
                         type="button"
-                        onClick={() => imageInputRef.current?.click()}
+                        onClick={() => void handleChooseChatImage()}
                         disabled={isSendingImage || isSendingMessage}
                         className={`flex h-10 w-10 items-center justify-center bg-transparent text-blue-600 transition ${
                           isSendingImage || isSendingMessage
                             ? "cursor-not-allowed opacity-35"
                             : "opacity-100 active:scale-95"
                         }`}
-                        aria-label="Enviar imagem"
-                        title="Enviar imagem"
+                        aria-label="Tirar foto"
+                        title="Tirar foto"
                       >
                         <Camera className="h-5 w-5" />
                       </button>
@@ -1525,4 +1603,5 @@ export function ChatList() {
     </div>
   );
 }
+
 

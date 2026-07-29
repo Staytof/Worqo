@@ -79,3 +79,4 @@ export const acceptedServiceTermsBullets = [
   "Limpeza: limpeza básica residencial e comercial leve, cozinha e banheiro, vidros, estofados, higienização de geladeira, limpeza pré ou pós-mudança leve, organização de ambientes e passadoria.",
   "Freelas: configuração de celular, transferência de dados, instalação de aplicativos, suporte a notebook e smart devices, digitalização de documentos, organização de home office e apoio tecnológico leve.",
 ];
+

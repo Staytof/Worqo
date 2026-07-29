@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer";
+﻿import nodemailer from "nodemailer";
 import { config, isEmailConfigured } from "../config.mjs";
 import { buildServicePaymentReceiptPdf } from "./pdf-provider.mjs";
 import { HttpError } from "../utils.mjs";
@@ -145,3 +145,4 @@ export async function sendServicePaymentReceiptEmail(receipt) {
 
   return { provider: "gmail-smtp" };
 }
+

@@ -1,4 +1,4 @@
-import { config, isCpfVerificationConfigured } from "../config.mjs";
+﻿import { config, isCpfVerificationConfigured } from "../config.mjs";
 import { arePersonNamesEquivalent, normalizeCpf } from "../cpf-utils.mjs";
 import { HttpError } from "../utils.mjs";
 
@@ -446,4 +446,5 @@ export async function verifyOfficialCpf({ cpf, birthDate, fullName }) {
 
   throw new HttpError(503, "O provedor oficial de CPF configurado não é suportado.");
 }
+
 

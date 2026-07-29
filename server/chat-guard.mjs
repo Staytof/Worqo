@@ -1,4 +1,4 @@
-import { HttpError } from "./utils.mjs";
+﻿import { HttpError } from "./utils.mjs";
 
 export const CHAT_EXTERNAL_CONTACT_WARNING =
   "Não envie mensagens sobre contato externo ou sua conta será bloqueada automaticamente.";
@@ -51,3 +51,4 @@ export function assertNoExternalContact(value) {
     throw new HttpError(400, CHAT_EXTERNAL_CONTACT_WARNING);
   }
 }
+

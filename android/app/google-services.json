@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "249537833370",
+    "project_id": "worqo-585e3",
+    "storage_bucket": "worqo-585e3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:249537833370:android:fcd1fe9f38d8438e323223",
+        "android_client_info": {
+          "package_name": "com.worqo.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAPqRiCUtovPS6uftEgtu9df57qZmJD2pg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Info, WifiOff, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  sanitizeUserFacingErrorMessage,
   WORQO_SYSTEM_STATUS_DURATION_MS,
   WORQO_SYSTEM_STATUS_EVENT,
 } from "../api/client";
@@ -18,6 +19,8 @@ type ToastState = {
   kind: SystemToastKind;
   message: string;
 };
+
+const DUPLICATE_TOAST_SUPPRESSION_MS = 30_000;
 
 function normalizeToastKind(kind: unknown): SystemToastKind {
   if (
@@ -38,7 +41,7 @@ export function SystemStatusBanner() {
   const lastToastRef = useRef<{ message: string; shownAt: number } | null>(null);
 
   const showToast = (kind: SystemToastKind, message: string) => {
-    const normalizedMessage = message.trim();
+    const normalizedMessage = sanitizeUserFacingErrorMessage(message);
 
     if (!normalizedMessage) {
       return;
@@ -47,7 +50,10 @@ export function SystemStatusBanner() {
     const now = Date.now();
     const lastToast = lastToastRef.current;
 
-    if (lastToast?.message === normalizedMessage && now - lastToast.shownAt < 900) {
+    if (
+      lastToast?.message === normalizedMessage &&
+      now - lastToast.shownAt < DUPLICATE_TOAST_SUPPRESSION_MS
+    ) {
       return;
     }
 
@@ -191,3 +197,4 @@ export function SystemStatusBanner() {
     </AnimatePresence>
   );
 }
+

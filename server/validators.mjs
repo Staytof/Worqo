@@ -1,4 +1,4 @@
-import { HttpError } from "./utils.mjs";
+﻿import { HttpError } from "./utils.mjs";
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isoBirthDateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -111,3 +111,4 @@ export function validateVerificationCode(code) {
     throw new HttpError(400, "Informe o código de 6 dígitos.");
   }
 }
+

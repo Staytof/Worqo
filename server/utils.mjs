@@ -1,4 +1,4 @@
-export class HttpError extends Error {
+﻿export class HttpError extends Error {
   constructor(statusCode, message, details = null) {
     super(message);
     this.name = "HttpError";
@@ -242,3 +242,4 @@ export function getClientIp(request) {
 
   return request.socket?.remoteAddress ?? "unknown";
 }
+

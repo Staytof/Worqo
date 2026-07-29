@@ -115,6 +115,33 @@ const selectActiveRequestByWorker = db.prepare(
   `
 );
 
+const selectCompletedRequestsByRequester = db.prepare(
+  `
+    ${requestSelection}
+    WHERE service_requests.requester_user_id = ?
+      AND service_requests.status = 'completed'
+    ORDER BY service_requests.updated_at DESC, service_requests.created_at DESC
+    LIMIT 50
+  `
+);
+
+const selectPendingClientReviewByWorker = db.prepare(
+  `
+    ${requestSelection}
+    WHERE service_requests.worker_user_id = ?
+      AND service_requests.status = 'completed'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM service_reviews
+        WHERE service_reviews.service_request_id = service_requests.id
+          AND service_reviews.reviewer_user_id = ?
+          AND service_reviews.target_user_id = service_requests.requester_user_id
+      )
+    ORDER BY service_requests.updated_at ASC, service_requests.created_at ASC
+    LIMIT 1
+  `
+);
+
 const selectBlockingRequestByRequester = db.prepare(
   `
     ${requestSelection}
@@ -365,6 +392,10 @@ const updateServiceRequestDetailsStatement = db.prepare(
     UPDATE service_requests
     SET
       service_details_json = ?,
+      latitude = ?,
+      longitude = ?,
+      accuracy = ?,
+      location_label = ?,
       status = 'waiting-worker',
       updated_at = ?
     WHERE id = ? AND requester_user_id = ?
@@ -427,6 +458,16 @@ const insertServiceReviewStatement = db.prepare(
       comment,
       created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `
+);
+
+const selectServiceReviewByRequestTargetStatement = db.prepare(
+  `
+    SELECT id
+    FROM service_reviews
+    WHERE service_request_id = ?
+      AND target_user_id = ?
+    LIMIT 1
   `
 );
 
@@ -613,7 +654,7 @@ function ensureDescription(value) {
   return normalizedValue;
 }
 
-function ensureCoordinaté(value, fieldLabel) {
+function ensureCoordinate(value, fieldLabel) {
   const numericValue = Number(value);
 
   if (!Number.isFinite(numericValue)) {
@@ -827,6 +868,10 @@ function ensureServiceDetails(payload) {
   const delayToleranceMinutes = ensureDelayToleranceMinutes(payload?.delayToleranceMinutes);
   const locationMode = payload?.locationMode;
   const address = String(payload?.address ?? "").trim().slice(0, 220);
+  const latitude = ensureCoordinate(payload?.latitude, "Latitude");
+  const longitude = ensureCoordinate(payload?.longitude, "Longitude");
+  const accuracy = ensureAccuracy(payload?.accuracy);
+  const locationLabel = normalizeLocationLabel(payload?.locationLabel || address);
 
   if (title.length < 4) {
     throw new HttpError(400, "Informe um título para o acordo.");
@@ -850,6 +895,10 @@ function ensureServiceDetails(payload) {
     delayToleranceMinutes,
     locationMode,
     address,
+    latitude,
+    longitude,
+    accuracy,
+    locationLabel,
   };
 }
 
@@ -992,7 +1041,11 @@ function getChatAccent(type) {
 }
 
 function shouldRevealExactServiceLocation(currentUserRole, status) {
-  return currentUserRole === "requester";
+  if (currentUserRole === "requester") {
+    return true;
+  }
+
+  return currentUserRole === "worker" && ["confirmed", "completed"].includes(status);
 }
 
 function mapServicePin(row) {
@@ -1058,6 +1111,12 @@ function listServiceRequestTimeline(requestId) {
     .map(mapServiceTimelineEvent);
 }
 
+function hasServiceRequestEvent(requestId, kind) {
+  return selectServiceRequestEventsStatement
+    .all(requestId)
+    .some((event) => event.event_kind === kind);
+}
+
 function createServiceRequestEvent(
   requestId,
   {
@@ -1088,7 +1147,7 @@ function maskServiceDetailsForViewer(details, currentUserRole, status) {
     return null;
   }
 
-  if (currentUserRole === "requester") {
+  if (shouldRevealExactServiceLocation(currentUserRole, status)) {
     return details;
   }
 
@@ -1412,6 +1471,17 @@ export function getActiveServiceRequestForUser(userId) {
   return null;
 }
 
+export function listCompletedServiceRequestsForUser(userId) {
+  return selectCompletedRequestsByRequester
+    .all(userId)
+    .map((row) => mapActiveServiceRequest(row, "requester"));
+}
+
+export function getPendingClientReviewForWorker(userId) {
+  const request = selectPendingClientReviewByWorker.get(userId, userId);
+  return mapActiveServiceRequest(request, "worker");
+}
+
 export function listServiceChatsForUser(userId) {
   return selectServiceChatsByUser
     .all(userId, userId)
@@ -1439,8 +1509,8 @@ export function createServiceRequestForUser(user, payload) {
     user.id,
     ensurePinType(payload.type),
     ensureDescription(payload.description),
-    ensureCoordinaté(payload.latitude, "Latitude"),
-    ensureCoordinaté(payload.longitude, "Longitude"),
+    ensureCoordinate(payload.latitude, "Latitude"),
+    ensureCoordinate(payload.longitude, "Longitude"),
     ensureAccuracy(payload.accuracy),
     normalizeLocationLabel(payload.locationLabel),
     timestamp,
@@ -1637,6 +1707,17 @@ export function takeServiceRequestForUser(userId, requestId) {
     description: "Um(a) profissional assumiu o pedido e está aguardando o aceite da cliente.",
   });
 
+  const assignedRequest = getServiceRequestForUpdate(requestId);
+  createUserNotification(
+    assignedRequest.requester_user_id,
+    "service-interest",
+    `${getNotificationFirstName(assignedRequest.worker_name, "Prestador(a)")} demonstrou interesse no seu pedido.`,
+    {
+      title: "Prestador(a) interessado(a)",
+      path: "/app/orders",
+    }
+  );
+
   return getActiveServiceRequestForUser(userId);
 }
 
@@ -1737,6 +1818,10 @@ export function submitServiceRequestDetailsForUser(userId, requestId, payload) {
 
   updateServiceRequestDetailsStatement.run(
     JSON.stringify(details),
+    details.latitude,
+    details.longitude,
+    details.accuracy,
+    details.locationLabel,
     nowIso(),
     requestId,
     userId
@@ -1816,6 +1901,51 @@ export async function markServiceRequestPaidForUser(userId, requestId) {
   }
 
   await refreshAsaasPaymentForServiceRequest(userId, requestId);
+
+  return {
+    ok: true,
+    request: getActiveServiceRequestForUser(userId),
+  };
+}
+
+export function markServiceRequestWorkerArrivedForUser(userId, requestId) {
+  const request = getServiceRequestForUpdate(requestId);
+
+  if (request.requester_user_id !== userId) {
+    throw new HttpError(403, "Você não pode registrar a chegada neste atendimento.");
+  }
+
+  if (request.status !== "confirmed") {
+    throw new HttpError(409, "A chegada só pode ser registrada após o pagamento confirmado.");
+  }
+
+  if (!request.worker_user_id) {
+    throw new HttpError(409, "Não existe um(a) prestador(a) vinculado(a) a este atendimento.");
+  }
+
+  if (hasServiceRequestEvent(requestId, "worker-arrived")) {
+    return {
+      ok: true,
+      request: getActiveServiceRequestForUser(userId),
+    };
+  }
+
+  const timestamp = nowIso();
+
+  createServiceRequestEvent(requestId, {
+    actorUserId: userId,
+    actorRole: "requester",
+    kind: "worker-arrived",
+    title: "Prestador(a) chegou",
+    description: "O(a) cliente confirmou a chegada do(a) prestador(a) ao local do atendimento.",
+    createdAt: timestamp,
+  });
+
+  createUserNotification(
+    request.worker_user_id,
+    "service-arrival-confirmed",
+    `${getNotificationFirstName(request.requester_name, "Cliente")} confirmou sua chegada ao atendimento.`
+  );
 
   return {
     ok: true,
@@ -2004,6 +2134,13 @@ export async function releaseServiceRequestPaymentForUser(userId, requestId, pay
     throw new HttpError(409, "Não existe um(a) profissional vinculado(a) a este atendimento.");
   }
 
+  if (!hasServiceRequestEvent(requestId, "worker-arrived")) {
+    throw new HttpError(
+      409,
+      "Confirme a chegada do(a) prestador(a) antes de liberar o pagamento."
+    );
+  }
+
   const review = ensureServiceReview(payload);
   const timestamp = nowIso();
   let result = null;
@@ -2064,6 +2201,51 @@ export async function releaseServiceRequestPaymentForUser(userId, requestId, pay
 
     throw error;
   }
+
+  return { ok: true };
+}
+
+export function reviewClientForCompletedServiceForUser(userId, requestId, payload) {
+  const request = getServiceRequestForUpdate(requestId);
+
+  if (request.worker_user_id !== userId) {
+    throw new HttpError(403, "Você não pode avaliar este cliente.");
+  }
+
+  if (request.status !== "completed") {
+    throw new HttpError(409, "Este atendimento ainda não foi concluído.");
+  }
+
+  if (selectServiceReviewByRequestTargetStatement.get(requestId, request.requester_user_id)) {
+    throw new HttpError(409, "Este cliente já recebeu sua avaliação neste atendimento.");
+  }
+
+  const review = ensureServiceReview(payload);
+  const timestamp = nowIso();
+
+  insertServiceReviewStatement.run(
+    createId(),
+    requestId,
+    userId,
+    request.requester_user_id,
+    review.rating,
+    review.comment,
+    timestamp
+  );
+
+  createServiceRequestEvent(requestId, {
+    actorUserId: userId,
+    actorRole: "worker",
+    kind: "client-reviewed",
+    title: "Cliente avaliado(a)",
+    description: "O(a) prestador(a) registrou a avaliação do cliente.",
+  });
+
+  createUserNotification(
+    request.requester_user_id,
+    "service-completed",
+    "O(a) prestador(a) avaliou seu perfil neste atendimento."
+  );
 
   return { ok: true };
 }

@@ -56,10 +56,19 @@ export function resolveNotificationRouteTarget(
     };
   }
 
+  if (kind === "service-interest") {
+    return {
+      path: "/app/orders",
+      chatId: null,
+    };
+  }
+
   if (
     kind === "service-accepted" ||
     kind === "service-details-sent" ||
     kind === "payment-confirmed" ||
+    kind === "service-arrival-confirmed" ||
+    kind === "service-completed" ||
     kind === "dispute-opened" ||
     kind === "dispute-resolved" ||
     kind === "requester-continued-search" ||

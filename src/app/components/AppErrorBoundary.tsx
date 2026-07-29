@@ -100,3 +100,4 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     );
   }
 }
+

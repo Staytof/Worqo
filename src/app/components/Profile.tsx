@@ -1,7 +1,8 @@
-﻿import {
+import {
   Award,
   Briefcase,
   ChevronRight,
+  Clock3,
   Headset,
   LayoutDashboard,
   LogOut,
@@ -144,9 +145,8 @@ export function Profile() {
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 pb-4 pt-4 sm:px-6">
         <section className="relative pb-6 pt-1.5 text-center">
           <div
-            className={`pointer-events-none absolute -left-4 -right-4 -top-4 h-[132px] overflow-hidden rounded-b-[28px] sm:-left-6 sm:-right-6 ${
-              isClientAccount ? "bg-blue-600" : "bg-sky-700"
-            }`}
+            className="pointer-events-none absolute -left-4 -right-4 -top-4 h-[132px] overflow-hidden rounded-b-[28px] sm:-left-6 sm:-right-6"
+            style={{ backgroundColor: isClientAccount ? "#fdcd2c" : "#0046ef" }}
           >
             <div className="absolute inset-0 opacity-15">
               {Array.from({ length: 36 }).map((_, index) => (
@@ -156,13 +156,13 @@ export function Profile() {
                     left: `${(index % 9) * 12}%`,
                     top: `${Math.floor(index / 9) * 34}%`,
                   }}
-                  className="absolute select-none text-lg font-black text-white"
+                  className={`absolute select-none text-lg font-black ${isClientAccount ? "text-slate-900" : "text-white"}`}
                 >
                   {["@", "#", "&", "W"][index % 4]}
                 </span>
               ))}
             </div>
-            <span className="absolute bottom-4 right-5 text-sm font-black tracking-wide text-white/80">
+            <span className={`absolute bottom-4 right-5 text-sm font-black tracking-wide ${isClientAccount ? "text-slate-900/65" : "text-white/80"}`}>
               Worko
             </span>
           </div>
@@ -275,7 +275,7 @@ export function Profile() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">
-                  Área do dono
+                  área do dono
                 </p>
                 <h2 className="mt-1 text-lg font-bold text-slate-900">
                   Painel administrativo liberado
@@ -302,6 +302,20 @@ export function Profile() {
                   <h2 className="font-bold text-slate-900">Sobre o(a) profissional</h2>
                 </div>
                 <p className="mt-4 break-words text-sm leading-7 text-slate-600">{user.bio}</p>
+              </section>
+            ) : null}
+
+            {user.availabilityNote.trim() ? (
+              <section className="worqo-section">
+                <div className="flex items-center gap-2">
+                  <Clock3 className="h-5 w-5 text-blue-500" />
+                  <h2 className="font-bold text-slate-900">Disponibilidade</h2>
+                </div>
+                <div className="mt-4 worqo-flat-panel px-4 py-3">
+                  <p className="break-words text-sm font-semibold leading-relaxed text-slate-700">
+                    {user.availabilityNote}
+                  </p>
+                </div>
               </section>
             ) : null}
 
@@ -425,19 +439,35 @@ export function Profile() {
                   {user.recentReviews.map((review) => (
                     <div key={review.id} className="worqo-list-row">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {getFirstNames(review.reviewerName, 2)}
-                          </p>
-                          <div className="mt-2 flex items-center gap-1 text-amber-400">
-                            {Array.from({ length: 5 }).map((_, index) => (
-                              <Star
-                                key={index}
-                                className={`h-4 w-4 ${
-                                  index < review.rating ? "fill-amber-400" : ""
-                                }`}
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-xs font-black text-blue-600">
+                            {review.reviewerAvatar ? (
+                              <img
+                                src={review.reviewerAvatar}
+                                alt={review.reviewerName}
+                                className="h-full w-full object-cover"
                               />
-                            ))}
+                            ) : (
+                              getInitials(review.reviewerName)
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">
+                              {getFirstNames(review.reviewerName, 2)}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs font-semibold text-blue-600">
+                              {review.serviceTitle || "Atendimento Worko"}
+                            </p>
+                            <div className="mt-2 flex items-center gap-1 text-amber-400">
+                              {Array.from({ length: 5 }).map((_, index) => (
+                                <Star
+                                  key={index}
+                                  className={`h-4 w-4 ${
+                                    index < review.rating ? "fill-amber-400" : ""
+                                  }`}
+                                />
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -521,17 +551,33 @@ export function Profile() {
                   <div className="mt-5 worqo-divider-list">
                     {user.recentReviews.map((review) => (
                       <div key={review.id} className="worqo-list-row">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {getFirstNames(review.reviewerName, 2)}
-                          </p>
-                          <div className="mt-2 flex items-center gap-1 text-amber-400">
-                            {Array.from({ length: 5 }).map((_, index) => (
-                              <Star
-                                key={index}
-                                className={`h-4 w-4 ${index < review.rating ? "fill-amber-400" : ""}`}
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-xs font-black text-blue-600">
+                            {review.reviewerAvatar ? (
+                              <img
+                                src={review.reviewerAvatar}
+                                alt={review.reviewerName}
+                                className="h-full w-full object-cover"
                               />
-                            ))}
+                            ) : (
+                              getInitials(review.reviewerName)
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">
+                              {getFirstNames(review.reviewerName, 2)}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs font-semibold text-blue-600">
+                              {review.serviceTitle || "Atendimento Worko"}
+                            </p>
+                            <div className="mt-2 flex items-center gap-1 text-amber-400">
+                              {Array.from({ length: 5 }).map((_, index) => (
+                                <Star
+                                  key={index}
+                                  className={`h-4 w-4 ${index < review.rating ? "fill-amber-400" : ""}`}
+                                />
+                              ))}
+                            </div>
                           </div>
                         </div>
                         <p className="mt-3 break-words text-sm leading-relaxed text-slate-600">
@@ -625,4 +671,5 @@ export function Profile() {
     </div>
   );
 }
+
 

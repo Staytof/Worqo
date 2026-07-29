@@ -1,6 +1,7 @@
 import { LocalNotifications } from "@capacitor/local-notifications";
 import {
   BellRing,
+  ClipboardList,
   ChevronLeft,
   ChevronRight,
   House,
@@ -25,7 +26,7 @@ import logoTop from "@/assets/logosup.png";
 
 const NOTIFICATION_TOAST_DURATION_MS = 4000;
 const MESSAGE_NOTIFICATION_TOAST_DURATION_MS = 5000;
-const APP_TOUR_VERSION = "v1";
+const APP_TOUR_VERSION = "v2";
 
 function AppLoadingScreen() {
   return <BrandSplash />;
@@ -68,6 +69,7 @@ function AppUsageTour({
 }) {
   const navigate = useNavigate();
   const [isVisible, setIsVisible] = useState(false);
+  const [isSkipConfirmOpen, setIsSkipConfirmOpen] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const activeStep = steps[stepIndex] ?? null;
 
@@ -102,6 +104,10 @@ function AppUsageTour({
     setIsVisible(false);
   }
 
+  function requestSkipTour() {
+    setIsSkipConfirmOpen(true);
+  }
+
   if (!isVisible || !activeStep) {
     return null;
   }
@@ -130,7 +136,7 @@ function AppUsageTour({
 
             <button
               type="button"
-              onClick={finishTour}
+              onClick={requestSkipTour}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
               aria-label="Fechar tutorial"
             >
@@ -165,6 +171,14 @@ function AppUsageTour({
 
             <button
               type="button"
+              onClick={requestSkipTour}
+              className="inline-flex h-11 min-w-0 items-center justify-center rounded-2xl px-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+            >
+              Pular
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 if (isLastStep) {
                   finishTour();
@@ -180,6 +194,39 @@ function AppUsageTour({
             </button>
           </div>
         </div>
+
+        {isSkipConfirmOpen ? (
+          <div className="fixed inset-0 z-[76] flex items-end justify-center bg-slate-950/35 p-4 sm:items-center">
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className="w-full max-w-sm rounded-[28px] bg-white p-5 shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+            >
+              <h3 className="text-lg font-bold text-slate-950">Pular dicas?</h3>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                Você pode usar o app normalmente, mas essas dicas não aparecerão de novo automaticamente.
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsSkipConfirmOpen(false)}
+                  className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={finishTour}
+                  className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white"
+                >
+                  Pular dicas
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        ) : null}
       </motion.div>
     </AnimatePresence>
   );
@@ -216,6 +263,7 @@ export function AppShell() {
   const isClientHomeRoute = location.pathname === "/app" && isClientShell;
   const isMuralRoute = location.pathname === "/app/mural";
   const isChatRoute = location.pathname === "/app/chat";
+  const isOrdersRoute = location.pathname === "/app/orders";
   const isServiceRoute = location.pathname.startsWith("/app/service");
   const isMainWalletRoute = location.pathname === "/app/wallet";
   const isMainProfileRoute = location.pathname === "/app/profile";
@@ -224,6 +272,7 @@ export function AppShell() {
     isClientHomeRoute ||
     isMuralRoute ||
     isChatRoute ||
+    isOrdersRoute ||
     isMainWalletRoute ||
     isMainProfileRoute;
   const isProfileSubRoute = location.pathname.startsWith("/app/profile/");
@@ -232,6 +281,7 @@ export function AppShell() {
     !isClientHomeRoute &&
     !isMuralRoute &&
     !isChatRoute &&
+    !isOrdersRoute &&
     !isMainWalletRoute &&
     !isMainProfileRoute &&
     !isProfileSubRoute;
@@ -505,6 +555,7 @@ export function AppShell() {
   const routeAllowedForClient =
     location.pathname === "/app" ||
     location.pathname === "/app/chat" ||
+    location.pathname === "/app/orders" ||
     location.pathname === "/app/notifications" ||
     location.pathname === "/app/profile" ||
     location.pathname.startsWith("/app/profile/") ||
@@ -522,6 +573,7 @@ export function AppShell() {
     ? [
         { id: "home", path: "/app", icon: House, label: "Início" },
         { id: "chat", path: "/app/chat", icon: MessageCircle, label: "Mensagens" },
+        { id: "orders", path: "/app/orders", icon: ClipboardList, label: "Pedidos" },
         { id: "profile", path: "/app/profile", icon: User, label: "Perfil" },
       ]
     : [
@@ -532,52 +584,71 @@ export function AppShell() {
         { id: "wallet", path: "/app/wallet", icon: WalletIcon, label: "Carteira" },
         { id: "profile", path: "/app/profile", icon: User, label: "Perfil" },
       ];
-  const appTourSteps: AppTourStep[] = navItems.map((item) => {
-    if (isClientAccount && item.id === "home") {
-      return {
-        id: item.id,
-        path: item.path,
-        title: "Início",
-        body: "Aqui você solicita serviços, escolhe a categoria e acompanha seu pedido ativo.",
-      };
-    }
-
-    if (item.id === "home") {
-      return {
-        id: item.id,
-        path: item.path,
-        title: "Mapa",
-        body: "Aqui ficam os pedidos próximos. Se sua conta estiver verificada, você pode ver e assumir solicitações dentro da região atendida.",
-      };
-    }
-
-    if (item.id === "chat") {
-      return {
-        id: item.id,
-        path: item.path,
-        title: "Mensagens",
-        body: "Suas conversas com profissionais aparecem aqui durante o atendimento.",
-      };
-    }
-
-    if (item.id === "wallet") {
-      return {
-        id: item.id,
-        path: item.path,
-        title: "Carteira",
-        body: "A carteira mostra pagamentos protegidos, saldo disponível, chave Pix e opções de saque imediato ou grátis após 24 horas.",
-      };
-    }
-
-    return {
-      id: item.id,
-      path: item.path,
-      title: "Perfil",
-      body: isClientAccount
-        ? "No perfil ficam seus dados, verificação de CPF, termos do app e SAC."
-        : "No perfil ficam seus dados, verificação de CPF, Pix, termos do app, SAC e as informações que outros(as) usuários(as) podem consultar.",
-    };
-  });
+  const appTourSteps: AppTourStep[] = isClientAccount
+    ? [
+        {
+          id: "home",
+          path: "/app",
+          title: "Início",
+          body: "Aqui você escolhe a categoria, descreve o serviço e acompanha o pedido enquanto busca prestadores(as) próximos(as).",
+        },
+        {
+          id: "client-map",
+          path: "/app",
+          title: "Local do atendimento",
+          body: "O mapa mostra sua região de atendimento. Sua localização exata só é usada no fluxo do serviço e com as proteções do app.",
+        },
+        {
+          id: "chat",
+          path: "/app/chat",
+          title: "Mensagens",
+          body: "As conversas com prestadores(as) aparecem aqui depois que uma conversa for aceita e iniciada.",
+        },
+        {
+          id: "orders",
+          path: "/app/orders",
+          title: "Pedidos",
+          body: "Acompanhe serviços pagos e ativos, veja dados do atendimento, abra disputa e libere pagamento quando o serviço avançar.",
+        },
+        {
+          id: "profile",
+          path: "/app/profile",
+          title: "Perfil",
+          body: "Aqui ficam seus dados, validação, avaliações recebidas, termos do app, suporte e segurança da conta.",
+        },
+      ]
+    : [
+        {
+          id: "home",
+          path: "/app",
+          title: "Mapa",
+          body: "Pedidos próximos aparecem no mapa. Com CPF validado, você pode visualizar solicitações dentro da região atendida.",
+        },
+        {
+          id: "provider-broadcast",
+          path: "/app",
+          title: "Divulgação",
+          body: "Use o botão de divulgação para aparecer para clientes próximos por até 5 dias. Uma divulgação ativa precisa ser cancelada antes de criar outra.",
+        },
+        {
+          id: "chat",
+          path: "/app/chat",
+          title: "Mensagens",
+          body: "Conversas aceitas e atendimentos em andamento ficam aqui. O chat é monitorado para proteger as duas partes.",
+        },
+        {
+          id: "wallet",
+          path: "/app/wallet",
+          title: "Carteira",
+          body: "Veja o saldo disponível para saque, chave Pix CPF e opções de saque imediato ou grátis após 24 horas.",
+        },
+        {
+          id: "profile",
+          path: "/app/profile",
+          title: "Perfil",
+          body: "Mantenha foto, profissão, habilidades, disponibilidade, endereço e CPF atualizados para passar mais confiança.",
+        },
+      ];
 
   return (
     <div className="worko-native-app relative flex h-dvh w-full min-w-0 overflow-hidden bg-neutral-50">
@@ -744,7 +815,7 @@ export function AppShell() {
         ) : null}
       </AnimatePresence>
 
-      {!isServiceRoute && !isChatRoute ? (
+      {!isServiceRoute ? (
         <AppUsageTour
           steps={appTourSteps}
           userId={user.id}
@@ -831,3 +902,4 @@ export function AppShell() {
     </div>
   );
 }
+

@@ -13,7 +13,8 @@ const INSTANT_WITHDRAWAL_FEE_CENTS = 199;
 const FREE_WITHDRAWAL_DELAY_MS = 24 * 60 * 60 * 1000;
 const ASAAS_REQUEST_TIMEOUT_MS = 12_000;
 const ASAAS_BALANCE_CACHE_TTL_MS = 20_000;
-const ASAAS_PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
+const ASAAS_PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED"]);
+const PIX_PAYMENT_EXPIRES_IN_MS = 15 * 60 * 1000;
 const ASAAS_PENDING_TRANSFER_STATUSES = new Set([
   "PENDING",
   "BANK_PROCESSING",
@@ -113,6 +114,7 @@ const updateServiceRequestAsaasPaymentStatement = db.prepare(
       asaas_payment_status = ?,
       asaas_payment_invoice_url = ?,
       asaas_payment_due_date = ?,
+      asaas_payment_expires_at = ?,
       asaas_payment_copy_paste = ?,
       asaas_payment_qr_code_base64 = ?,
       asaas_payment_received_at = ?,
@@ -133,6 +135,7 @@ const updateServiceRequestAsaasPaymentStateStatement = db.prepare(
       asaas_payment_status = ?,
       asaas_payment_invoice_url = ?,
       asaas_payment_due_date = ?,
+      asaas_payment_expires_at = COALESCE(?, asaas_payment_expires_at),
       asaas_payment_copy_paste = COALESCE(?, asaas_payment_copy_paste),
       asaas_payment_qr_code_base64 = COALESCE(?, asaas_payment_qr_code_base64),
       asaas_payment_received_at = ?,
@@ -150,6 +153,7 @@ const markServiceRequestPaidStatement = db.prepare(
       asaas_payment_status = ?,
       asaas_payment_invoice_url = ?,
       asaas_payment_due_date = ?,
+      asaas_payment_expires_at = COALESCE(?, asaas_payment_expires_at),
       asaas_payment_copy_paste = COALESCE(?, asaas_payment_copy_paste),
       asaas_payment_qr_code_base64 = COALESCE(?, asaas_payment_qr_code_base64),
       asaas_payment_received_at = ?,
@@ -167,6 +171,7 @@ const clearServiceRequestPaymentSessionStatement = db.prepare(
       asaas_payment_status = NULL,
       asaas_payment_invoice_url = NULL,
       asaas_payment_due_date = NULL,
+      asaas_payment_expires_at = NULL,
       asaas_payment_copy_paste = NULL,
       asaas_payment_qr_code_base64 = NULL,
       asaas_payment_received_at = NULL,
@@ -237,7 +242,7 @@ const selectAvailableCompletedRequestsForWithdrawalStatement = db.prepare(
     LEFT JOIN worker_withdrawals ON worker_withdrawals.id = service_requests.worker_withdrawal_id
     WHERE service_requests.worker_user_id = ?
       AND service_requests.status = 'completed'
-      AND service_requests.asaas_payment_status IN ('RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH')
+      AND service_requests.asaas_payment_status IN ('RECEIVED', 'CONFIRMED')
       AND COALESCE(service_requests.dispute_status, '') <> 'open'
       AND (
         service_requests.worker_withdrawal_id IS NULL
@@ -266,7 +271,7 @@ const selectFreeWithdrawalNotificationCandidatesStatement = db.prepare(
     LEFT JOIN worker_withdrawals ON worker_withdrawals.id = service_requests.worker_withdrawal_id
     WHERE service_requests.worker_user_id IS NOT NULL
       AND service_requests.status = 'completed'
-      AND service_requests.asaas_payment_status IN ('RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH')
+      AND service_requests.asaas_payment_status IN ('RECEIVED', 'CONFIRMED')
       AND COALESCE(service_requests.dispute_status, '') <> 'open'
       AND (
         service_requests.worker_withdrawal_id IS NULL
@@ -611,6 +616,18 @@ function isStandardWithdrawalEligible(row) {
   return Date.now() - referenceDate.getTime() >= FREE_WITHDRAWAL_DELAY_MS;
 }
 
+function getFreeWithdrawalAvailableAt(row) {
+  const referenceDate = new Date(
+    row?.asaas_payment_received_at ?? row?.updated_at ?? row?.created_at ?? nowIso()
+  );
+
+  if (Number.isNaN(referenceDate.getTime())) {
+    return null;
+  }
+
+  return new Date(referenceDate.getTime() + FREE_WITHDRAWAL_DELAY_MS).toISOString();
+}
+
 function resolveWalletEntryNetAmountCents(row) {
   const storedAmountCents = normalizeStoredAmountCents(row.payment_amount_subtotal_cents);
 
@@ -677,6 +694,44 @@ function resolveWalletEntryFeeAmountCents(row, netAmountCents) {
 
 function isPaidAsaasStatus(status) {
   return ASAAS_PAID_STATUSES.has(String(status ?? "").trim().toUpperCase());
+}
+
+function isReceivedInCashPayment(payment) {
+  const paymentMarkers = [
+    payment?.billingType,
+    payment?.type,
+    payment?.paymentMethod,
+    payment?.paymentOrigin,
+  ].map((value) => String(value ?? "").trim().toUpperCase());
+
+  return Boolean(payment?.receivedInCash) || paymentMarkers.includes("RECEIVED_IN_CASH");
+}
+
+function isPaidAsaasPayment(payment) {
+  return isPaidAsaasStatus(payment?.status) && !isReceivedInCashPayment(payment);
+}
+
+function resolvePixExpirationDate(qrCode) {
+  const rawExpiration = qrCode?.expirationDate ?? qrCode?.expiresAt ?? null;
+
+  if (rawExpiration) {
+    const parsedExpiration = new Date(rawExpiration);
+
+    if (!Number.isNaN(parsedExpiration.getTime())) {
+      return parsedExpiration.toISOString();
+    }
+  }
+
+  return new Date(Date.now() + PIX_PAYMENT_EXPIRES_IN_MS).toISOString();
+}
+
+function isPaymentSessionExpired(row) {
+  if (!row?.asaas_payment_expires_at) {
+    return false;
+  }
+
+  const expiresAt = new Date(row.asaas_payment_expires_at).getTime();
+  return Number.isFinite(expiresAt) && expiresAt <= Date.now();
 }
 
 function normalizePhoneForAsaas(value) {
@@ -971,11 +1026,12 @@ function ensureWorkerPixKeyReadyFromRow(requestRow) {
 
 async function fetchPixQrCode(paymentId) {
   const qrCode = await asaasRequest(`/payments/${paymentId}/pixQrCode`);
+  const expirationDate = resolvePixExpirationDate(qrCode);
 
   return {
     copyPaste: qrCode?.payload ?? qrCode?.copyPaste ?? null,
     qrCodeBase64: qrCode?.encodedImage ?? qrCode?.image ?? null,
-    expirationDate: qrCode?.expirationDate ?? null,
+    expirationDate,
   };
 }
 
@@ -986,34 +1042,38 @@ function syncServiceRequestPaymentFromAsaasPayment(requestId, payment, qrCode = 
     .toUpperCase();
   const paymentId = String(payment?.id ?? "").trim() || null;
   const paymentStatus = String(payment?.status ?? "").trim().toUpperCase() || null;
+  const paymentIsPaid = isPaidAsaasPayment(payment);
   const invoiceUrl = payment?.invoiceUrl ?? null;
   const dueDate = payment?.dueDate ?? null;
+  const expiresAt = qrCode?.expirationDate ?? null;
   const receivedAt =
-    isPaidAsaasStatus(paymentStatus)
+    paymentIsPaid
       ? payment?.clientPaymentDate ?? payment?.confirmedDate ?? payment?.paymentDate ?? nowIso()
       : null;
   const copyPaste = qrCode?.copyPaste ?? null;
   const qrCodeBase64 = qrCode?.qrCodeBase64 ?? null;
   const timestamp = nowIso();
 
-  const result = markServiceRequestPaidStatement.run(
-    paymentId,
-    paymentStatus,
-    invoiceUrl,
-    dueDate,
-    copyPaste,
-    qrCodeBase64,
-    receivedAt,
-    timestamp,
-    requestId
-  );
-
-  if (result.changes === 0) {
+  if (paymentIsPaid) {
+    markServiceRequestPaidStatement.run(
+      paymentId,
+      paymentStatus,
+      invoiceUrl,
+      dueDate,
+      expiresAt,
+      copyPaste,
+      qrCodeBase64,
+      receivedAt,
+      timestamp,
+      requestId
+    );
+  } else {
     updateServiceRequestAsaasPaymentStateStatement.run(
       paymentId,
       paymentStatus,
       invoiceUrl,
       dueDate,
+      expiresAt,
       copyPaste,
       qrCodeBase64,
       receivedAt,
@@ -1025,7 +1085,7 @@ function syncServiceRequestPaymentFromAsaasPayment(requestId, payment, qrCode = 
   if (
     currentRequestRow &&
     !isPaidAsaasStatus(previousPaymentStatus) &&
-    isPaidAsaasStatus(paymentStatus)
+    paymentIsPaid
   ) {
     createServiceRequestEvent(requestId, {
       actorRole: "system",
@@ -1230,7 +1290,8 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
   if (
     requestRow.asaas_payment_id &&
     !isPaidAsaasStatus(requestRow.asaas_payment_status) &&
-    requestRow.asaas_payment_copy_paste
+    requestRow.asaas_payment_copy_paste &&
+    !isPaymentSessionExpired(requestRow)
   ) {
     return {
       paymentId: requestRow.asaas_payment_id,
@@ -1239,7 +1300,24 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
       dueDate: requestRow.asaas_payment_due_date ?? null,
       pixCopyPaste: requestRow.asaas_payment_copy_paste ?? null,
       pixQrCodeBase64: requestRow.asaas_payment_qr_code_base64 ?? null,
+      expiresAt: requestRow.asaas_payment_expires_at ?? null,
     };
+  }
+
+  if (
+    requestRow.asaas_payment_id &&
+    !isPaidAsaasStatus(requestRow.asaas_payment_status) &&
+    isPaymentSessionExpired(requestRow)
+  ) {
+    try {
+      await asaasRequest(`/payments/${requestRow.asaas_payment_id}`, {
+        method: "DELETE",
+      });
+    } catch {
+      // Se a cobrança antiga já não puder ser removida, seguimos criando uma nova sessão.
+    }
+
+    clearServiceRequestPaymentSessionStatement.run(nowIso(), requestId);
   }
 
   const customerId = await ensureAsaasCustomerForUser(userId);
@@ -1266,6 +1344,7 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
     String(payment.status ?? "PENDING").trim().toUpperCase(),
     payment.invoiceUrl ?? null,
     payment.dueDate ?? null,
+    qrCode.expirationDate,
     qrCode.copyPaste,
     qrCode.qrCodeBase64,
     null,
@@ -1321,6 +1400,7 @@ export async function refreshAsaasPaymentForServiceRequest(userId, requestId) {
     dueDate: payment?.dueDate ?? requestRow.asaas_payment_due_date ?? null,
     pixCopyPaste: qrCode?.copyPaste ?? requestRow.asaas_payment_copy_paste ?? null,
     pixQrCodeBase64: qrCode?.qrCodeBase64 ?? requestRow.asaas_payment_qr_code_base64 ?? null,
+    expiresAt: qrCode?.expirationDate ?? requestRow.asaas_payment_expires_at ?? null,
   };
 }
 
@@ -1336,7 +1416,7 @@ export async function cancelAsaasPendingPaymentForServiceRequest(requestId) {
 
   syncServiceRequestPaymentFromAsaasPayment(requestId, payment);
 
-  if (isPaidAsaasStatus(paymentStatus)) {
+  if (isPaidAsaasPayment(payment)) {
     throw new HttpError(
       409,
       "Este Pix já foi confirmado. O pedido não pode mais ser cancelado."
@@ -1362,7 +1442,7 @@ export async function refundAsaasPaymentForServiceRequest(requestId) {
   const payment = await asaasRequest(`/payments/${requestRow.asaas_payment_id}`);
   const paymentStatus = String(payment?.status ?? "").trim().toUpperCase();
 
-  if (!isPaidAsaasStatus(paymentStatus)) {
+  if (!isPaidAsaasPayment(payment)) {
     throw new HttpError(409, "O Pix deste atendimento ainda não foi confirmado.");
   }
 
@@ -1473,6 +1553,7 @@ export async function getAsaasWalletSummaryForUser(userId) {
       createdAt: row.created_at ?? nowIso(),
       updatedAt: row.updated_at ?? row.created_at ?? nowIso(),
       releasedAt: row.worker_withdrawn_at ?? null,
+      freeWithdrawalAvailableAt: getFreeWithdrawalAvailableAt(row),
     };
   });
 
@@ -1516,6 +1597,12 @@ export async function getAsaasWalletSummaryForUser(userId) {
   );
   const instantAvailableNowCents = instantSelection.totalCents;
   const standardAvailableNowCents = standardSelection.totalCents;
+  const nextFreeWithdrawalAvailableAt =
+    candidateRequests
+      .map(getFreeWithdrawalAvailableAt)
+      .filter(Boolean)
+      .filter((value) => new Date(value).getTime() > Date.now())
+      .sort()[0] ?? null;
   const providerBalanceShortfallCents =
     providerAvailableBalanceCents === null
       ? 0
@@ -1541,6 +1628,7 @@ export async function getAsaasWalletSummaryForUser(userId) {
     providerAvailableBalanceCents,
     instantAvailableNowCents,
     standardAvailableNowCents,
+    nextFreeWithdrawalAvailableAt,
     providerBalanceShortfallCents,
     providerBalanceMessage,
     providerBalanceSyncedAt: providerBalance.syncedAt,
@@ -1709,4 +1797,5 @@ export async function createPixWithdrawalForUser(userId, options = {}) {
     ),
   };
 }
+
 

@@ -28,6 +28,7 @@ import type {
   PostComposerPayload,
   RegistrationDraft,
   ServiceDetailsPayload,
+  ServiceReview,
   ServiceReviewPayload,
   ServicePin,
   ServiceRequestStatus,
@@ -92,6 +93,7 @@ type Result = {
   message?: string;
   user?: UserProfile;
   post?: Post;
+  requiresVerification?: boolean;
 };
 
 type ChatMessagePayload = {
@@ -151,10 +153,18 @@ type ServicePaymentSessionResult = Result & {
   expiresAt?: string | null;
 };
 
+type CompletedServiceRequestsResult = Result & {
+  requests?: ActiveServiceRequest[];
+};
+
 type AppContextValue = {
   state: AppState;
   login: (payload: LoginPayload) => Promise<Result>;
-  completeGoogleLogin: (payload: { token: string; rememberMe?: boolean }) => Promise<Result>;
+  completeGoogleLogin: (payload: {
+    token?: string;
+    pendingVerification?: PendingVerification;
+    rememberMe?: boolean;
+  }) => Promise<Result>;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<Result>;
   register: (payload: RegistrationDraft) => Promise<Result>;
@@ -183,8 +193,10 @@ type AppContextValue = {
   cancelActiveServiceRequest: () => Promise<Result>;
   deleteActiveServiceRequest: () => Promise<Result>;
   markServicePaid: () => Promise<Result>;
+  markWorkerArrived: () => Promise<Result>;
   openServiceDispute: (reason: string) => Promise<Result>;
   releaseServicePayment: (payload: ServiceReviewPayload) => Promise<Result>;
+  listCompletedServiceRequests: () => Promise<CompletedServiceRequestsResult>;
   refreshSessionState: () => Promise<Result>;
   dismissNotification: (notificationId: string) => void;
   removeNotification: (notificationId: string) => void;
@@ -244,6 +256,23 @@ function clearPersistedStateStorage() {
   window.localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
 
+function hydrateServiceReviews(reviews: Partial<ServiceReview>[] | null | undefined): ServiceReview[] {
+  if (!Array.isArray(reviews)) {
+    return [];
+  }
+
+  return reviews.map((review) => ({
+    id: review.id ?? "",
+    rating: Number(review.rating) || 0,
+    comment: review.comment ?? "",
+    reviewerId: review.reviewerId ?? "",
+    reviewerName: review.reviewerName ?? "Cliente",
+    reviewerAvatar: review.reviewerAvatar ?? null,
+    serviceTitle: review.serviceTitle ?? "Atendimento Worko",
+    createdAt: review.createdAt ?? "",
+  }));
+}
+
 function hydrateUserProfile(user: Partial<UserProfile> | null | undefined): UserProfile | null {
   if (!user) {
     return null;
@@ -253,7 +282,8 @@ function hydrateUserProfile(user: Partial<UserProfile> | null | undefined): User
     id: user.id ?? "",
     fullName: user.fullName ?? "",
     email: user.email ?? "",
-    accountKind: user.accountKind === "client" || user.accountKind === "provider" ? user.accountKind : null,
+    accountKind:
+      user.accountKind === "client" || user.accountKind === "provider" ? user.accountKind : null,
     phone: user.phone ?? "",
     birthDate: user.birthDate ?? "",
     avatar: user.avatar ?? null,
@@ -288,7 +318,7 @@ function hydrateUserProfile(user: Partial<UserProfile> | null | undefined): User
     averageRating:
       typeof user.averageRating === "number" ? user.averageRating : user.averageRating ?? null,
     reviewsCount: user.reviewsCount ?? 0,
-    recentReviews: user.recentReviews ?? [],
+    recentReviews: hydrateServiceReviews(user.recentReviews),
     createdAt: user.createdAt ?? "",
   };
 
@@ -563,6 +593,17 @@ function hydrateServiceDetails(
         : 15,
     locationMode: details.locationMode === "street" ? "street" : "residence",
     address: details.address ?? "",
+    latitude:
+      Number.isFinite(Number(details.latitude)) ? Number(details.latitude) : null,
+    longitude:
+      Number.isFinite(Number(details.longitude)) ? Number(details.longitude) : null,
+    accuracy:
+      details.accuracy === null || details.accuracy === undefined
+        ? null
+        : Number.isFinite(Number(details.accuracy))
+          ? Number(details.accuracy)
+          : null,
+    locationLabel: details.locationLabel ?? null,
   };
 }
 
@@ -1598,11 +1639,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const completeGoogleLogin = async ({
     token,
+    pendingVerification,
     rememberMe = true,
   }: {
-    token: string;
+    token?: string;
+    pendingVerification?: PendingVerification;
     rememberMe?: boolean;
   }): Promise<Result> => {
+    if (pendingVerification) {
+      setState((current) => ({
+        ...current,
+        authReady: true,
+        isAuthenticated: false,
+        rememberSession: rememberMe,
+        sessionToken: null,
+        user: null,
+        pendingVerification,
+        onboardingStep: "verify",
+      }));
+
+      return {
+        ok: true,
+        requiresVerification: true,
+      };
+    }
+
+    if (!token) {
+      return {
+        ok: false,
+        error: "O retorno do Google não trouxe uma sessão válida.",
+      };
+    }
+
     try {
       const session = await apiRequest<{ user: UserProfile }>("/api/auth/session", {
         token,
@@ -1981,11 +2049,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const submitServiceDetails = async ({
     address,
     delayToleranceMinutes,
+    latitude,
     locationMode,
+    locationLabel,
+    longitude,
     price,
     serviceDate,
     schedule,
     title,
+    accuracy,
   }: ServiceDetailsPayload): Promise<Result> => {
     if (!state.sessionToken || !state.activeServiceRequest) {
       return {
@@ -2013,6 +2085,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             delayToleranceMinutes,
             locationMode,
             address: normalizedAddress,
+            latitude,
+            longitude,
+            accuracy: accuracy ?? null,
+            locationLabel: locationLabel ?? normalizedAddress,
           },
         }
       );
@@ -2191,6 +2267,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dueDate?: string | null;
         pixCopyPaste?: string | null;
         pixQrCodeBase64?: string | null;
+        expiresAt?: string | null;
       }>(`/api/service-requests/${state.activeServiceRequest.id}/payment-status`, {
         method: "PATCH",
         token: state.sessionToken,
@@ -2239,7 +2316,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
       }
 
-      if (paymentState.status === "expired" || paymentState.paymentStatus === "expired") {
+      const normalizedPaymentStatus = String(
+        paymentState.status ?? paymentState.paymentStatus ?? ""
+      )
+        .trim()
+        .toUpperCase();
+
+      if (normalizedPaymentStatus === "EXPIRED" || normalizedPaymentStatus === "OVERDUE") {
         return {
           ok: false,
           error: "Esta cobrança Pix expirou. Gere um novo Pix para continuar.",
@@ -2247,9 +2330,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       if (
-        paymentState.paymentStatus === "PENDING" ||
-        paymentState.paymentStatus === "unpaid" ||
-        paymentState.paymentStatus === "no_payment_required"
+        normalizedPaymentStatus === "PENDING" ||
+        normalizedPaymentStatus === "UNPAID" ||
+        normalizedPaymentStatus === "NO_PAYMENT_REQUIRED"
       ) {
         return {
           ok: true,
@@ -2360,6 +2443,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const markServicePaid = async (): Promise<Result> => refreshServicePaymentStatus();
+
+  const markWorkerArrived = async (): Promise<Result> => {
+    if (!state.sessionToken || !state.activeServiceRequest) {
+      return {
+        ok: false,
+        error: "Não encontramos um atendimento ativo para registrar a chegada.",
+      };
+    }
+
+    try {
+      const data = await apiRequest<{ request: RemoteServiceRequest }>(
+        `/api/service-requests/${state.activeServiceRequest.id}/worker-arrived`,
+        {
+          method: "PATCH",
+          token: state.sessionToken,
+        }
+      );
+
+      setState((current) => ({
+        ...current,
+        activeServiceRequest: data.request
+          ? mapRemoteActiveServiceRequest(data.request, current.activeServiceRequest)
+          : current.activeServiceRequest,
+      }));
+
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos registrar a chegada agora.",
+      };
+    }
+  };
 
   const openServiceDispute = async (reason: string): Promise<Result> => {
     if (!state.sessionToken || !state.activeServiceRequest) {
@@ -2514,6 +2633,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
           error instanceof Error
             ? error.message
             : "Não conseguimos liberar este pagamento agora.",
+      };
+    }
+  };
+
+  const listCompletedServiceRequests = async (): Promise<CompletedServiceRequestsResult> => {
+    if (!state.sessionToken) {
+      return {
+        ok: false,
+        error: "Não encontramos sua sessão para carregar o histórico.",
+      };
+    }
+
+    try {
+      const response = await apiRequest<{ requests: RemoteServiceRequest[] }>(
+        "/api/service-requests/history",
+        {
+          token: state.sessionToken,
+        }
+      );
+
+      return {
+        ok: true,
+        requests: response.requests.map((request) =>
+          mapRemoteActiveServiceRequest(request, null)
+        ),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos carregar o histórico agora.",
       };
     }
   };
@@ -2915,8 +3067,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         cancelActiveServiceRequest: withErrorToast(cancelActiveServiceRequest),
         deleteActiveServiceRequest: withErrorToast(deleteActiveServiceRequest),
         markServicePaid: withErrorToast(markServicePaid),
+        markWorkerArrived: withErrorToast(markWorkerArrived),
         openServiceDispute: withErrorToast(openServiceDispute),
         releaseServicePayment: withErrorToast(releaseServicePayment),
+        listCompletedServiceRequests,
         refreshSessionState: withErrorToast(refreshSessionState),
         dismissNotification,
         removeNotification,
@@ -2947,6 +3101,7 @@ export function useApp() {
 
   return context;
 }
+
 
 
 

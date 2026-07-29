@@ -43,3 +43,4 @@ export function containsExternalContact(value: string) {
     normalized
   );
 }
+

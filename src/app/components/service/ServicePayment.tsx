@@ -54,6 +54,8 @@ export function ServicePayment() {
   const [message, setMessage] = useState("");
   const [pixCopyPaste, setPixCopyPaste] = useState("");
   const [pixQrCodeBase64, setPixQrCodeBase64] = useState("");
+  const [pixExpiresAt, setPixExpiresAt] = useState<string | null>(null);
+  const [pixRemainingMs, setPixRemainingMs] = useState<number | null>(null);
   const [isLoadingPayment, setIsLoadingPayment] = useState(false);
   const [isRefreshingPayment, setIsRefreshingPayment] = useState(false);
   const [isCopyingPix, setIsCopyingPix] = useState(false);
@@ -61,6 +63,7 @@ export function ServicePayment() {
   const [showConfirmedState, setShowConfirmedState] = useState(false);
   const redirectTimeoutRef = useRef<number | null>(null);
   const slowValidationTimeoutRef = useRef<number | null>(null);
+  const renewalKeyRef = useRef<string | null>(null);
   useErrorToast(error);
 
   const baseServiceAmount = parseCurrencyValue(activeServiceRequest?.details?.price ?? "");
@@ -73,6 +76,24 @@ export function ServicePayment() {
     () => resolveQrCodeImage(pixQrCodeBase64),
     [pixQrCodeBase64]
   );
+  const pixExpirationTime = useMemo(() => {
+    if (!pixExpiresAt) {
+      return null;
+    }
+
+    const timestamp = new Date(pixExpiresAt).getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }, [pixExpiresAt]);
+  const pixRemainingLabel = useMemo(() => {
+    if (pixRemainingMs === null) {
+      return "";
+    }
+
+    const totalSeconds = Math.max(0, Math.ceil(pixRemainingMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }, [pixRemainingMs]);
 
   useEffect(() => {
     return () => {
@@ -113,6 +134,8 @@ export function ServicePayment() {
 
       setPixCopyPaste(result.pixCopyPaste ?? "");
       setPixQrCodeBase64(result.pixQrCodeBase64 ?? "");
+      setPixExpiresAt(result.expiresAt ?? null);
+      renewalKeyRef.current = null;
       setMessage("O pagamento será validado automaticamente assim que o Pix for compensado.");
       setShowRefreshAction(false);
 
@@ -131,6 +154,67 @@ export function ServicePayment() {
       cancelled = true;
     };
   }, [activeServiceRequest?.id, activeServiceRequest?.status, createServicePaymentSession]);
+
+  useEffect(() => {
+    if (!pixExpirationTime || activeServiceRequest?.status !== "payment") {
+      setPixRemainingMs(null);
+      return;
+    }
+
+    const updateRemainingTime = () => {
+      setPixRemainingMs(Math.max(0, pixExpirationTime - Date.now()));
+    };
+
+    updateRemainingTime();
+    const intervalId = window.setInterval(updateRemainingTime, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeServiceRequest?.status, pixExpirationTime]);
+
+  useEffect(() => {
+    if (
+      !pixExpirationTime ||
+      pixRemainingMs === null ||
+      pixRemainingMs > 0 ||
+      activeServiceRequest?.status !== "payment" ||
+      isLoadingPayment ||
+      renewalKeyRef.current === pixExpiresAt
+    ) {
+      return;
+    }
+
+    renewalKeyRef.current = pixExpiresAt;
+
+    void (async () => {
+      setIsLoadingPayment(true);
+      setMessage("Código Pix expirado. Gerando um novo código...");
+      setError("");
+
+      const result = await createServicePaymentSession();
+
+      setIsLoadingPayment(false);
+
+      if (!result.ok) {
+        setError(result.error ?? "Não conseguimos renovar o Pix agora.");
+        return;
+      }
+
+      setPixCopyPaste(result.pixCopyPaste ?? "");
+      setPixQrCodeBase64(result.pixQrCodeBase64 ?? "");
+      setPixExpiresAt(result.expiresAt ?? null);
+      renewalKeyRef.current = null;
+      setMessage("Novo código Pix gerado. Pague dentro do prazo exibido.");
+    })();
+  }, [
+    activeServiceRequest?.status,
+    createServicePaymentSession,
+    isLoadingPayment,
+    pixExpiresAt,
+    pixExpirationTime,
+    pixRemainingMs,
+  ]);
 
   useEffect(() => {
     if (!activeServiceRequest || activeServiceRequest.status !== "payment" || showConfirmedState) {
@@ -324,7 +408,7 @@ export function ServicePayment() {
             </div>
             <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3">
               <span className="text-sm font-medium text-slate-500">
-                Asaas fixo
+                Taxa fixa
               </span>
               <span className="text-sm font-semibold text-slate-900">
                 {formatCurrencyAmount(asaasFeeAmount)}
@@ -367,6 +451,11 @@ export function ServicePayment() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                 Copia e cola Pix
               </p>
+              {pixRemainingLabel ? (
+                <div className="mt-2 inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                  Expira em {pixRemainingLabel}
+                </div>
+              ) : null}
               <div className="mt-3 rounded-[24px] border border-slate-200 bg-white p-4">
                 <textarea
                   readOnly
@@ -421,3 +510,4 @@ export function ServicePayment() {
     </div>
   );
 }
+

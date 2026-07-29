@@ -1,4 +1,4 @@
-﻿import { Geolocation } from "@capacitor/geolocation";
+import { Geolocation } from "@capacitor/geolocation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -63,6 +63,8 @@ const REQUEST_DESCRIPTION_MAX_LENGTH = 50;
 const PROMOTION_DESCRIPTION_MAX_LENGTH = 160;
 const PROVIDER_PROMOTION_RADIUS_KM = 8;
 const PROMOTION_DURATION_OPTIONS = [1, 2, 3, 4, 5] as const;
+const CLIENT_ACCENT_COLOR = "#fdcd2c";
+const PROVIDER_ACCENT_COLOR = "#0046ef";
 const SERVICE_AREA_LAUNCH_NOTICE =
   "O Worko está em testes de recepção do público e seu uso é exclusivo para Suzano e Itaquaquecetuba.";
 const SERVICE_AREA_PLACEHOLDER = "Buscar endereço em Suzano ou Itaquaquecetuba...";
@@ -368,20 +370,45 @@ function createCategoryPinMarkerContent(maps: any, type: PinType, isActive: bool
   }).element;
 }
 
-function createUserMarkerContent(maps: any) {
+function getAccountPinColor(accountKind?: "client" | "provider" | null) {
+  return accountKind === "client" ? CLIENT_ACCENT_COLOR : PROVIDER_ACCENT_COLOR;
+}
+
+function createUserMarkerContent(maps: any, accountKind?: "client" | "provider" | null) {
   return new maps.marker.PinElement({
-    background: "#2563eb",
+    background: getAccountPinColor(accountKind),
     borderColor: "#ffffff",
-    glyphColor: "#ffffff",
+    glyphColor: accountKind === "client" ? "#0f172a" : "#ffffff",
     scale: 1.06,
+  }).element;
+}
+function createClientDestinationMarkerContent(maps: any) {
+  return new maps.marker.PinElement({
+    background: CLIENT_ACCENT_COLOR,
+    borderColor: "#ffffff",
+    glyphColor: "#0f172a",
+    scale: 1.65,
   }).element;
 }
 
 function createClassicMarkerIcon(
   maps: any,
   color = "#2563eb",
-  scale = 10
+  scale = 10,
+  shape: "circle" | "pin" = "circle"
 ) {
+  if (shape === "pin") {
+    return {
+      path: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z",
+      scale: scale / 12,
+      fillColor: color,
+      fillOpacity: 1,
+      strokeColor: "#ffffff",
+      strokeWeight: 3,
+      anchor: new maps.Point(12, 22),
+    };
+  }
+
   return {
     path: maps.SymbolPath.CIRCLE,
     scale,
@@ -403,6 +430,7 @@ function createGoogleMapsMarker(
     gmpClickable?: boolean;
     color?: string;
     scale?: number;
+    shape?: "circle" | "pin";
   }
 ) {
   if (HAS_GOOGLE_MAP_ID && maps.marker?.AdvancedMarkerElement) {
@@ -422,7 +450,7 @@ function createGoogleMapsMarker(
     title: options.title,
     zIndex: options.zIndex,
     clickable: options.gmpClickable ?? true,
-    icon: createClassicMarkerIcon(maps, options.color, options.scale),
+    icon: createClassicMarkerIcon(maps, options.color, options.scale, options.shape),
   });
 }
 
@@ -460,6 +488,20 @@ function setGoogleMapsMarkerContent(marker: any, content: HTMLElement) {
   if ("content" in marker) {
     marker.content = content;
   }
+}
+
+function setGoogleMapsMarkerIcon(
+  maps: any,
+  marker: any,
+  color = "#2563eb",
+  scale = 10,
+  shape: "circle" | "pin" = "circle"
+) {
+  if (!marker || typeof marker.setIcon !== "function") {
+    return;
+  }
+
+  marker.setIcon(createClassicMarkerIcon(maps, color, scale, shape));
 }
 
 function setGoogleMapsMarkerTitle(marker: any, title: string) {
@@ -1493,9 +1535,10 @@ function ClientLocationPreview() {
         markerRef.current = createGoogleMapsMarker(maps, {
           map,
           position: location.coords,
-          title: "Sua localização",
+          title: "Sua localiza??o",
           zIndex: 10,
-          content: createUserMarkerContent(maps),
+          content: createUserMarkerContent(maps, "client"),
+          color: CLIENT_ACCENT_COLOR,
           gmpClickable: false,
         });
 
@@ -1539,7 +1582,7 @@ function ClientLocationPreview() {
 
   const statusLabel =
     status === "ready"
-      ? "Sua localização"
+      ? "Sua localiza??o"
       : status === "loading"
         ? "Localizando..."
         : "Região atendida";
@@ -1712,7 +1755,8 @@ function ClientLocationPreviewClean({
             position: searchCenter,
             title: "Local do pedido",
             zIndex: 10,
-            content: createUserMarkerContent(maps),
+            content: createUserMarkerContent(maps, "client"),
+            color: CLIENT_ACCENT_COLOR,
             gmpClickable: false,
           });
 
@@ -1740,9 +1784,10 @@ function ClientLocationPreviewClean({
         markerRef.current = createGoogleMapsMarker(maps, {
           map,
           position: location.coords,
-          title: "Sua localização",
+          title: "Sua localiza??o",
           zIndex: 10,
-          content: createUserMarkerContent(maps),
+          content: createUserMarkerContent(maps, "client"),
+          color: CLIENT_ACCENT_COLOR,
           gmpClickable: false,
         });
 
@@ -2120,7 +2165,7 @@ function ClientHome() {
     const normalizedDescription = description.trim();
 
     if (hasActiveRequesterService) {
-      setError("Você já tem um pedido em andamento.");
+      setError("Voc?já tem um pedido em andamento.");
       return;
     }
 
@@ -2447,8 +2492,10 @@ function ProviderHome() {
     createServiceRequest,
     cancelActiveServiceRequest,
     declineWorkerInterest,
+    markWorkerArrived,
     openChat,
     openServiceDispute,
+    refreshSessionState,
     refreshServicePins,
     releaseServicePayment,
     removePost,
@@ -2474,7 +2521,6 @@ function ProviderHome() {
   const pinMarkerClickListenersRef = useRef<Map<string, any>>(new Map());
   const requestMarkerRef = useRef<any>(null);
   const requestPrivacyCircleRef = useRef<any>(null);
-  const requestRouteLineRef = useRef<any>(null);
   const promotionCoverageCircleRef = useRef<any>(null);
   const promotionRadarCircleRef = useRef<any>(null);
   const promotionRadarFrameRef = useRef<number | null>(null);
@@ -2515,12 +2561,21 @@ function ProviderHome() {
   const [isAcceptingWorker, setIsAcceptingWorker] = useState(false);
   const [isDecliningWorker, setIsDecliningWorker] = useState(false);
   const [isCancellingActiveRequest, setIsCancellingActiveRequest] = useState(false);
+  const [isMarkingWorkerArrived, setIsMarkingWorkerArrived] = useState(false);
   const [isActiveRequestSheetOpen, setIsActiveRequestSheetOpen] = useState(false);
+  const [isRoutePickerOpen, setIsRoutePickerOpen] = useState(false);
   const [activeRequestSheetError, setActiveRequestSheetError] = useState("");
+  const [pendingClientReviewRequest, setPendingClientReviewRequest] =
+    useState<ActiveServiceRequest | null>(null);
+  const [clientReviewRating, setClientReviewRating] = useState(0);
+  const [clientReviewComment, setClientReviewComment] = useState("");
+  const [isSubmittingClientReview, setIsSubmittingClientReview] = useState(false);
+  const [clientReviewError, setClientReviewError] = useState("");
   useErrorToast(requestError);
   useErrorToast(promotionError);
   useErrorToast(locationPrecisionError);
   useErrorToast(activeRequestSheetError);
+  useErrorToast(clientReviewError);
   const [, setMapSyncFeedback] = useState<{
     tone: "success" | "error";
     message: string;
@@ -2544,6 +2599,83 @@ function ProviderHome() {
       }
   );
   const [mapReady, setMapReady] = useState(false);
+
+  useEffect(() => {
+    if (!sessionToken || user?.accountKind !== "provider") {
+      setPendingClientReviewRequest(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void apiRequest<{ request: Partial<ActiveServiceRequest> | null }>(
+      "/api/service-requests/pending-client-review",
+      { token: sessionToken }
+    )
+      .then((response) => {
+        if (cancelled) return;
+
+        const request = response.request;
+        setPendingClientReviewRequest(
+          request
+            ?
+             ({
+                ...request,
+                createdAtLabel: request.createdAtLabel ?? "",
+                dismissedWorkerIds: request.dismissedWorkerIds ?? [],
+                timeline: request.timeline ?? [],
+                currentUserRole: "worker",
+              } as ActiveServiceRequest)
+            : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setPendingClientReviewRequest(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeServiceRequest?.status, sessionToken, user?.accountKind, user?.id]);
+
+  const handleSubmitClientReview = async () => {
+    if (!sessionToken || !pendingClientReviewRequest || isSubmittingClientReview) return;
+
+    if (clientReviewRating < 1) {
+      setClientReviewError("Selecione uma nota para o cliente.");
+      return;
+    }
+
+    if (clientReviewComment.trim().length < 8) {
+      setClientReviewError("Escreva um comentário breve sobre o atendimento.");
+      return;
+    }
+
+    setIsSubmittingClientReview(true);
+    setClientReviewError("");
+
+    try {
+      await apiRequest(`/api/service-requests/${pendingClientReviewRequest.id}/review-client`, {
+        method: "PATCH",
+        token: sessionToken,
+        body: {
+          rating: clientReviewRating,
+          comment: clientReviewComment.trim(),
+        },
+      });
+
+      setPendingClientReviewRequest(null);
+      setClientReviewRating(0);
+      setClientReviewComment("");
+      void refreshSessionState();
+    } catch (error) {
+      setClientReviewError(
+          error instanceof Error ? error.message : "Não conseguimos enviar esta avaliação agora."
+      );
+    } finally {
+      setIsSubmittingClientReview(false);
+    }
+  };
 
   const clearPinMarkers = () => {
     pinMarkerClickListenersRef.current.forEach((listener) => {
@@ -2587,7 +2719,7 @@ function ProviderHome() {
     locationState.status === "ready" && !hasAcceptedRequestLocation
       ? locationState.source === "service-area"
         ? "Ative o GPS do celular para publicar seu pedido."
-        : `Sua localização atual ainda está imprecisa (${formatAccuracy(
+        : `Sua localiza??o atual ainda está imprecisa (${formatAccuracy(
             locationState.coords.accuracy
           )}). Ative o GPS para continuar.`
       : null;
@@ -2724,6 +2856,12 @@ function ProviderHome() {
   }, [workerProfileCard, workerPublicProfile]);
 
   const hasLiveRequest = Boolean(activeServiceRequest && activeServiceRequest.status !== "completed");
+  const canOpenExternalRoute =
+    activeServiceRequest?.currentUserRole === "worker" &&
+    activeServiceRequest.status === "confirmed" &&
+    activeServiceRequest.exactLocationVisible &&
+    Number.isFinite(Number(activeServiceRequest.latitude)) &&
+    Number.isFinite(Number(activeServiceRequest.longitude));
   const hasOverlayCardOpen = Boolean(
       selectedPin ||
       isRequestComposerOpen ||
@@ -2731,7 +2869,8 @@ function ProviderHome() {
       isPromotionManagerOpen ||
       isWorkerProfileOpen ||
       profilePreview ||
-      isActiveRequestSheetOpen
+      isActiveRequestSheetOpen ||
+      isRoutePickerOpen
   );
   const interestPromptKey =
     activeServiceRequest?.status === "interest-received" &&
@@ -2845,9 +2984,10 @@ function ProviderHome() {
       userMarkerRef.current = createGoogleMapsMarker(maps, {
         map,
         position: coords,
-        title: "Você",
+        title: "Voce",
         zIndex: 1000,
-        content: createUserMarkerContent(maps),
+        content: createUserMarkerContent(maps, user?.accountKind),
+        color: getAccountPinColor(user?.accountKind),
         gmpClickable: true,
       });
       userMarkerClickListenerRef.current = userMarkerRef.current.addListener("click", () => {
@@ -2856,7 +2996,7 @@ function ProviderHome() {
     } else {
       setGoogleMapsMarkerMap(userMarkerRef.current, map);
       setGoogleMapsMarkerPosition(userMarkerRef.current, coords);
-      setGoogleMapsMarkerContent(userMarkerRef.current, createUserMarkerContent(maps));
+      setGoogleMapsMarkerContent(userMarkerRef.current, createUserMarkerContent(maps, user?.accountKind));
     }
 
     if (!showAccuracyCircle) {
@@ -3500,79 +3640,48 @@ function ProviderHome() {
 
     requestPrivacyCircleRef.current?.setMap?.(null);
 
-    const content = createCategoryPinMarkerContent(maps, request.type, true);
+    const destination = {
+      lat: request.latitude,
+      lng: request.longitude,
+    };
+    const shouldUseClientDestinationMarker =
+      request.currentUserRole === "worker" && request.status === "confirmed";
+    const content = shouldUseClientDestinationMarker
+      ? createClientDestinationMarkerContent(maps)
+      : createCategoryPinMarkerContent(maps, request.type, true);
+    const markerTitle = shouldUseClientDestinationMarker
+      ? `Destino de ${request.requesterName}${request.details?.schedule ? ` - ${request.details.schedule}` : ""}`
+      : `Solicitação em aberto - ${request.type}`;
+    const requestMarkerColor = shouldUseClientDestinationMarker
+      ? CLIENT_ACCENT_COLOR
+      : getCategoryColor(request.type, true);
 
     if (!requestMarkerRef.current) {
       requestMarkerRef.current = createGoogleMapsMarker(maps, {
         map,
-        position: {
-          lat: request.latitude,
-          lng: request.longitude,
-        },
-        zIndex: 950,
+        position: destination,
+        zIndex: 960,
         content,
-        title: `Solicitação em aberto - ${request.type}`,
-        color: getCategoryColor(request.type, true),
-        scale: 11,
+        title: markerTitle,
+        color: requestMarkerColor,
+        scale: shouldUseClientDestinationMarker ? 22 : 12,
+        shape: shouldUseClientDestinationMarker ? "pin" : "circle",
       });
       return;
     }
 
     setGoogleMapsMarkerMap(requestMarkerRef.current, map);
-    setGoogleMapsMarkerPosition(requestMarkerRef.current, {
-      lat: request.latitude,
-      lng: request.longitude,
-    });
+    setGoogleMapsMarkerPosition(requestMarkerRef.current, destination);
     setGoogleMapsMarkerContent(requestMarkerRef.current, content);
-    setGoogleMapsMarkerTitle(requestMarkerRef.current, `Solicitação em aberto - ${request.type}`);
-  }, [activeServiceRequest, locationState]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    const maps = mapsRef.current;
-
-    if (
-      !map ||
-      !maps ||
-      locationState.status !== "ready" ||
-      locationState.source !== "device" ||
-      !activeServiceRequest ||
-      activeServiceRequest.status === "completed" ||
-      activeServiceRequest.currentUserRole !== "worker" ||
-      !activeServiceRequest.exactLocationVisible
-    ) {
-      requestRouteLineRef.current?.setMap?.(null);
-      return;
-    }
-
-    const path = [
-      {
-        lat: locationState.coords.lat,
-        lng: locationState.coords.lng,
-      },
-      {
-        lat: activeServiceRequest.latitude,
-        lng: activeServiceRequest.longitude,
-      },
-    ];
-
-    if (!requestRouteLineRef.current) {
-      requestRouteLineRef.current = new maps.Polyline({
-        map,
-        path,
-        clickable: false,
-        geodesic: true,
-        strokeColor: "#2563eb",
-        strokeOpacity: 0.95,
-        strokeWeight: 5,
-        zIndex: 425,
-      });
-      return;
-    }
-
-    requestRouteLineRef.current.setMap(map);
-    requestRouteLineRef.current.setPath(path);
-  }, [activeServiceRequest, locationState]);
+    setGoogleMapsMarkerIcon(
+      maps,
+      requestMarkerRef.current,
+      requestMarkerColor,
+      shouldUseClientDestinationMarker ? 22 : 12,
+      shouldUseClientDestinationMarker ? "pin" : "circle"
+    );
+    setGoogleMapsMarkerTitle(requestMarkerRef.current, markerTitle);
+  }, [activeServiceRequest]);
 
   useEffect(() => {
     if (locationState.status !== "ready") {
@@ -3583,12 +3692,21 @@ function ProviderHome() {
 
     void watchUserLocation(
       (nextCoords) => {
+        const shouldFollowConfirmedRoute =
+          activeServiceRequest?.status === "confirmed" &&
+          activeServiceRequest.currentUserRole === "worker" &&
+          activeServiceRequest.exactLocationVisible;
         const shouldUpgrade =
+          shouldFollowConfirmedRoute ||
           locationState.source !== "device" ||
           nextCoords.accuracy + 15 < locationState.coords.accuracy;
 
         if (shouldUpgrade) {
-          applyResolvedLocation(nextCoords, "device", locationState.source !== "device");
+          applyResolvedLocation(
+            nextCoords,
+            "device",
+            shouldFollowConfirmedRoute ? false : locationState.source !== "device"
+          );
         }
       },
       () => {
@@ -3618,7 +3736,7 @@ function ProviderHome() {
       clearLocationWatch(deviceWatchIdRef.current);
       deviceWatchIdRef.current = null;
     };
-  }, [locationState]);
+  }, [activeServiceRequest?.currentUserRole, activeServiceRequest?.exactLocationVisible, activeServiceRequest?.status, locationState]);
 
   useEffect(() => {
     return () => {
@@ -3627,7 +3745,6 @@ function ProviderHome() {
       removeGoogleMapsListener(userMarkerClickListenerRef.current);
       userMarkerClickListenerRef.current = null;
       detachGoogleMapsOverlay(requestMarkerRef.current);
-      detachGoogleMapsOverlay(requestRouteLineRef.current);
       detachGoogleMapsOverlay(requestPrivacyCircleRef.current);
       detachGoogleMapsOverlay(serviceAreaMaskRef.current);
       serviceAreaOutlineRefs.current.forEach((outline) => {
@@ -3645,7 +3762,6 @@ function ProviderHome() {
       accuracyCircleRef.current = null;
       userMarkerRef.current = null;
       requestMarkerRef.current = null;
-      requestRouteLineRef.current = null;
       requestPrivacyCircleRef.current = null;
       promotionCoverageCircleRef.current = null;
       promotionRadarCircleRef.current = null;
@@ -3654,19 +3770,6 @@ function ProviderHome() {
       mapsRef.current = null;
     };
   }, []);
-
-  const handleOpenActiveRequestDirections = () => {
-    if (!activeServiceRequest || typeof window === "undefined") {
-      return;
-    }
-
-    const destination = `${activeServiceRequest.latitude},${activeServiceRequest.longitude}`;
-    window.open(
-      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(destination)}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
-  };
 
   const handleTakeRequest = async () => {
     if (!selectedPin || isTakingRequest) {
@@ -3715,7 +3818,7 @@ function ProviderHome() {
       tone: "success",
       message:
         activeServiceRequest?.currentUserRole === "worker"
-          ? "Você liberou a solicitação e ela voltou para o mapa."
+          ? "Voc?liberou a solicitação e ela voltou para o mapa."
           : "Seu pedido foi retirado do mapa.",
       });
     setIsActiveRequestSheetOpen(false);
@@ -4143,6 +4246,22 @@ function ProviderHome() {
     return result;
   };
 
+  const handleMarkWorkerArrivedFromSheet = async (): Promise<{
+    ok: boolean;
+    error?: string;
+  }> => {
+    setActiveRequestSheetError("");
+    setIsMarkingWorkerArrived(true);
+    const result = await markWorkerArrived();
+    setIsMarkingWorkerArrived(false);
+
+    if (!result.ok) {
+      setActiveRequestSheetError(result.error ?? "Não conseguimos registrar a chegada agora.");
+    }
+
+    return result;
+  };
+
   const handleOpenDisputeFromSheet = async (
     reason: string
   ): Promise<{ ok: boolean; error?: string }> => {
@@ -4207,6 +4326,38 @@ function ProviderHome() {
     }
 
     setIsFullscreenMode((current) => !current);
+  };
+
+  const getActiveRequestDestinationLabel = () => {
+    if (!activeServiceRequest) {
+      return "";
+    }
+
+    return (
+      activeServiceRequest.details?.address ||
+      activeServiceRequest.details?.locationLabel ||
+      activeServiceRequest.locationLabel ||
+      "Local do cliente"
+    );
+  };
+
+  const handleOpenExternalRoute = (app: "google" | "waze") => {
+    if (!canOpenExternalRoute || !activeServiceRequest || typeof window === "undefined") {
+      return;
+    }
+
+    const latitude = Number(activeServiceRequest.latitude);
+    const longitude = Number(activeServiceRequest.longitude);
+    const destination = `${latitude},${longitude}`;
+    const url =
+      app === "waze"
+        ? `https://waze.com/ul?ll=${encodeURIComponent(destination)}&navigate=yes`
+        : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
+            destination
+          )}&travelmode=driving`;
+
+    setIsRoutePickerOpen(false);
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {
@@ -4448,6 +4599,86 @@ function ProviderHome() {
             </motion.div>
           </>
         )}
+      </AnimatePresence>
+
+      {!hasOverlayCardOpen && canOpenExternalRoute && (
+        <button
+          type="button"
+          onClick={() => setIsRoutePickerOpen(true)}
+          className="absolute bottom-28 left-1/2 z-40 inline-flex h-14 -translate-x-1/2 items-center justify-center gap-2.5 rounded-full border border-blue-600 bg-blue-600 px-6 text-sm font-black text-white transition active:scale-[0.98]"
+          aria-label="Ver rota em aplicativo externo"
+        >
+          <MapPin className="h-5 w-5" />
+          Ver rota
+        </button>
+      )}
+
+      <AnimatePresence>
+        {isRoutePickerOpen && canOpenExternalRoute ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsRoutePickerOpen(false)}
+            className="absolute inset-0 z-[82] flex items-end justify-center bg-slate-950/35 px-4 pb-[calc(6.5rem+env(safe-area-inset-bottom,0px))] backdrop-blur-[2px]"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 18 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(event) => event.stopPropagation()}
+              className="w-full max-w-sm rounded-[28px] bg-white p-5 text-neutral-950"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-blue-600">
+                    Rota externa
+                  </p>
+                  <h2 className="mt-1 text-xl font-black text-slate-950">
+                    Abrir localiza??o do cliente?
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsRoutePickerOpen(false)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition active:bg-slate-200"
+                  aria-label="Fechar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-blue-50 px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+                  <p className="text-sm font-bold leading-relaxed text-blue-950">
+                    {getActiveRequestDestinationLabel()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenExternalRoute("google")}
+                  className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 text-sm font-black text-white transition active:scale-[0.98]"
+                >
+                  <MapPin className="h-4 w-4" />
+                  Abrir no Google Maps
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenExternalRoute("waze")}
+                  className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-950 text-sm font-black text-white transition active:scale-[0.98]"
+                >
+                  <MapPin className="h-4 w-4" />
+                  Abrir no Waze
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
       </AnimatePresence>
 
       {!isFullscreenMode && !hasOverlayCardOpen && (
@@ -5371,6 +5602,74 @@ function ProviderHome() {
           )}
       </AnimatePresence>
 
+      {pendingClientReviewRequest ? (
+        <div className="fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/40 px-4 py-5 backdrop-blur-[2px] sm:items-center">
+          <div className="w-full max-w-sm rounded-[28px] bg-white p-5 text-neutral-950 shadow-[0_18px_55px_rgba(15,23,42,0.20)]">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-blue-600">
+              Avaliação obrigatória
+            </p>
+            <h2 className="mt-1 text-xl font-black leading-tight text-slate-950">
+              Avalie o cliente
+            </h2>
+
+            <div className="mt-4 rounded-3xl bg-slate-50 p-4">
+              <p className="text-sm font-black text-slate-950">
+                {pendingClientReviewRequest.details?.title || pendingClientReviewRequest.description}
+              </p>
+              <p className="mt-1 text-xs font-bold text-slate-500">
+                Cliente: {pendingClientReviewRequest.requesterName || "Cliente"}
+              </p>
+              <p className="mt-1 text-xs font-bold text-slate-500">
+                Endereço: {pendingClientReviewRequest.details?.address || pendingClientReviewRequest.locationLabel || "Local protegido"}
+              </p>
+              {pendingClientReviewRequest.details?.schedule ? (
+                <p className="mt-1 text-xs font-bold text-slate-500">
+                  Horário: {pendingClientReviewRequest.details.schedule}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mt-5 flex justify-center gap-2">
+              {Array.from({ length: 5 }).map((_, index) => {
+                const value = index + 1;
+
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setClientReviewRating(value)}
+                      className={`flex h-11 w-11 items-center justify-center rounded-full ${
+                        clientReviewRating >= value
+                          ? "bg-amber-50 text-amber-500"
+                          : "bg-slate-100 text-slate-300"
+                      }`}
+                  >
+                    <Star className="h-5 w-5" fill="currentColor" />
+                  </button>
+                );
+              })}
+            </div>
+
+            <textarea
+              value={clientReviewComment}
+              onChange={(event) => setClientReviewComment(event.target.value.slice(0, 220))}
+              rows={4}
+              placeholder="Conte como foi atender este cliente."
+              className="mt-4 w-full resize-none rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-200"
+            />
+
+            <button
+              type="button"
+              onClick={() => void handleSubmitClientReview()}
+              disabled={isSubmittingClientReview}
+              className="mt-4 flex h-12 w-full items-center justify-center rounded-2xl bg-blue-600 text-sm font-black text-white disabled:opacity-60"
+            >
+              {isSubmittingClientReview ? "Enviando..." : "Enviar avaliação"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <ActiveRequestSheet
         request={activeServiceRequest}
         isOpen={isActiveRequestSheetOpen}
@@ -5383,6 +5682,8 @@ function ProviderHome() {
         onCancelRequest={() => void handleCancelRequest()}
         onAcceptWorker={() => void handleAcceptWorker()}
         onDeclineWorker={(options) => void handleDeclineWorker(options)}
+        isMarkingWorkerArrived={isMarkingWorkerArrived}
+        onMarkWorkerArrived={handleMarkWorkerArrivedFromSheet}
         onReleasePayment={handleReleasePaymentFromSheet}
         onOpenDispute={handleOpenDisputeFromSheet}
       />
@@ -5439,3 +5740,4 @@ export function Home() {
 
   return <ProviderHome />;
 }
+

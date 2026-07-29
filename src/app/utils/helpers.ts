@@ -311,3 +311,4 @@ export function formatDelayTolerance(value: number) {
 
   return minutes === 1 ? "1 minuto" : `${minutes} minutos`;
 }
+

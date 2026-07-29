@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { App, type URLOpenListenerEvent } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { motion } from "motion/react";
 import { Link, useNavigate } from "react-router";
@@ -24,50 +26,133 @@ export function Login() {
   const [feedbackTone, setFeedbackTone] = useState<"error" | "info">("info");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const processedGoogleCallbackRef = useRef("");
+
+  const completeGoogleCallback = useCallback(async (callbackUrl: string) => {
+    if (!callbackUrl || processedGoogleCallbackRef.current === callbackUrl) {
+      return;
+    }
+
+    let callback: URL;
+
+    try {
+      callback = new URL(callbackUrl);
+    } catch {
+      setIsGoogleSubmitting(false);
+      setFeedbackTone("error");
+      setFeedback("Não conseguimos concluir o retorno do Google. Tente novamente.");
+      return;
+    }
+
+    const params = callback.searchParams;
+    const googleToken = params.get("googleToken");
+    const googlePendingRaw = params.get("googlePending");
+    const googleError = params.get("googleError");
+
+    if (!googleToken && !googlePendingRaw && !googleError) {
+      return;
+    }
+
+    processedGoogleCallbackRef.current = callbackUrl;
+
+    if (callback.protocol === "http:" || callback.protocol === "https:") {
+      window.history.replaceState(null, "", window.location.pathname || "/");
+    }
+
+    if (googleError) {
+      setIsGoogleSubmitting(false);
+      setFeedbackTone("error");
+      setFeedback(googleError);
+      return;
+    }
+
+    let googlePending = null;
+
+    if (googlePendingRaw) {
+      try {
+        googlePending = JSON.parse(googlePendingRaw);
+      } catch {
+        setIsGoogleSubmitting(false);
+        setFeedbackTone("error");
+        setFeedback("Não conseguimos preparar a verificação desta conta Google.");
+        return;
+      }
+    }
+
+    if (!googleToken && !googlePending) {
+      return;
+    }
+
+    setIsGoogleSubmitting(true);
+
+    const result = await completeGoogleLogin({
+      token: googleToken ?? undefined,
+      pendingVerification: googlePending ?? undefined,
+      rememberMe: params.get("googleRemember") !== "0",
+    });
+
+    setIsGoogleSubmitting(false);
+
+    if (!result.ok) {
+      setFeedbackTone("error");
+      setFeedback(result.error ?? "Não conseguimos concluir o login com Google.");
+      return;
+    }
+
+    setFeedback("");
+    if (result.requiresVerification) {
+      navigate("/verify", { replace: true });
+      return;
+    }
+    navigate(result.user?.isAdmin ? "/admin" : "/app", { replace: true });
+  }, [completeGoogleLogin, navigate]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const googleToken = params.get("googleToken");
-    const googleError = params.get("googleError");
+    void completeGoogleCallback(window.location.href);
+  }, [completeGoogleCallback]);
 
-    if (!googleToken && !googleError) {
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) {
       return;
     }
 
-    window.history.replaceState(null, "", window.location.pathname || "/");
+    let disposed = false;
+    let removeListener: (() => Promise<void>) | undefined;
 
-    if (googleError) {
-      setFeedbackTone("error");
-      setFeedback(googleError);
-      return;
-    }
-
-    if (!googleToken) {
-      return;
-    }
-
-    setIsGoogleSubmitting(true);
-
-    void completeGoogleLogin({
-      token: googleToken,
-      rememberMe: params.get("googleRemember") !== "0",
-    }).then((result) => {
-      setIsGoogleSubmitting(false);
-
-      if (!result.ok) {
-        setFeedbackTone("error");
-        setFeedback(result.error ?? "Não conseguimos concluir o login com Google.");
+    const receiveGoogleReturn = async ({ url }: URLOpenListenerEvent) => {
+      if (!url.startsWith("com.worqo.app://auth/google")) {
         return;
       }
 
-      setFeedback("");
-      navigate(result.user?.isAdmin ? "/admin" : "/app");
+      await Browser.close().catch(() => undefined);
+      await completeGoogleCallback(url);
+    };
+
+    void App.addListener("appUrlOpen", receiveGoogleReturn).then((listener) => {
+      if (disposed) {
+        void listener.remove();
+        return;
+      }
+      removeListener = () => listener.remove();
     });
-  }, [completeGoogleLogin, navigate]);
+
+    void App.getLaunchUrl().then((launchUrl) => {
+      if (!disposed && launchUrl?.url) {
+        void receiveGoogleReturn({ url: launchUrl.url });
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (removeListener) {
+        void removeListener();
+      }
+    };
+  }, [completeGoogleCallback]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -103,7 +188,7 @@ export function Login() {
     );
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     setFeedback("");
     setIsGoogleSubmitting(true);
     const baseUrl = resolveApiBaseUrl();
@@ -113,6 +198,16 @@ export function Login() {
 
     if (Capacitor.isNativePlatform()) {
       params.set("returnTo", "com.worqo.app://auth/google");
+      try {
+        await Browser.open({
+          url: `${baseUrl}/api/auth/google/start?${params.toString()}`,
+        });
+      } catch {
+        setIsGoogleSubmitting(false);
+        setFeedbackTone("error");
+        setFeedback("Não conseguimos abrir o login do Google. Tente novamente.");
+      }
+      return;
     }
 
     window.location.assign(`${baseUrl}/api/auth/google/start?${params.toString()}`);
@@ -309,3 +404,4 @@ export function Login() {
     </motion.div>
   );
 }
+

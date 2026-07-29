@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { dispatchSystemStatus } from "../api/client";
+import { dispatchSystemStatus, sanitizeUserFacingErrorMessage } from "../api/client";
 
 export function useErrorToast(error: string | null | undefined) {
   const lastShownRef = useRef("");
@@ -7,14 +7,20 @@ export function useErrorToast(error: string | null | undefined) {
   useEffect(() => {
     const message = String(error ?? "").trim();
 
-    if (!message || message === lastShownRef.current) {
+    if (!message) {
       return;
     }
 
-    lastShownRef.current = message;
+    const safeMessage = sanitizeUserFacingErrorMessage(message);
+
+    if (safeMessage === lastShownRef.current) {
+      return;
+    }
+
+    lastShownRef.current = safeMessage;
     dispatchSystemStatus({
       kind: "error",
-      message,
+      message: safeMessage,
     });
   }, [error]);
 }

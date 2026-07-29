@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#2563EB</color>
+    <color name="colorPrimaryDark">#17358F</color>
+    <color name="colorAccent">#60A5FA</color>
+    <color name="worqo_splash_blue">#2563EB</color>
+</resources>

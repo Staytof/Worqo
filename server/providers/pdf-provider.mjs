@@ -1,4 +1,4 @@
-import PDFDocument from "pdfkit";
+﻿import PDFDocument from "pdfkit";
 import { config } from "../config.mjs";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
@@ -127,3 +127,4 @@ export async function buildServicePaymentReceiptPdf(receipt) {
 
   return done;
 }
+

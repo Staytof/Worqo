@@ -2,6 +2,7 @@ import { Capacitor, CapacitorHttp } from "@capacitor/core";
 
 const clientRelease = (import.meta.env.VITE_CLIENT_RELEASE ?? "").trim();
 const DEFAULT_REQUEST_TIMEOUT_MS = 12_000;
+const NATIVE_API_BASE_URL = "https://34-39-198-120.sslip.io";
 const configuredApiBaseUrl = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
 export const WORQO_SYSTEM_STATUS_EVENT = "worqo-system-status";
@@ -9,7 +10,16 @@ export const WORQO_SYSTEM_STATUS_DURATION_MS = 4000;
 
 export function resolveApiBaseUrl() {
   if (Capacitor.isNativePlatform()) {
-    return configuredApiBaseUrl;
+    if (!configuredApiBaseUrl) {
+      return NATIVE_API_BASE_URL;
+    }
+
+    try {
+      const configuredUrl = new URL(configuredApiBaseUrl);
+      return configuredUrl.toString().replace(/\/$/, "");
+    } catch {
+      return NATIVE_API_BASE_URL;
+    }
   }
 
   if (typeof window === "undefined") {
@@ -31,6 +41,21 @@ export function resolveApiBaseUrl() {
   }
 
   return configuredApiBaseUrl;
+}
+
+function resolveApiRequestUrl(path: string) {
+  const baseUrl = resolveApiBaseUrl();
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      return new URL(normalizedPath, `${baseUrl.replace(/\/$/, "")}/`).toString();
+    } catch {
+      return `${NATIVE_API_BASE_URL}${normalizedPath}`;
+    }
+  }
+
+  return `${baseUrl}${normalizedPath}`;
 }
 
 type ApiRequestOptions = {
@@ -66,9 +91,17 @@ export function dispatchSystemStatus(detail: Record<string, unknown>) {
     return;
   }
 
+  const safeDetail =
+    typeof detail.message === "string"
+      ? {
+          ...detail,
+          message: sanitizeUserFacingErrorMessage(detail.message),
+        }
+      : detail;
+
   window.dispatchEvent(
     new CustomEvent(WORQO_SYSTEM_STATUS_EVENT, {
-      detail,
+      detail: safeDetail,
     })
   );
 }
@@ -108,7 +141,16 @@ function resolveTransportErrorMessage(error: unknown) {
       loweredMessage.includes("connection refused") ||
       loweredMessage.includes("network is unreachable") ||
       loweredMessage.includes("failed to connect") ||
-      loweredMessage.includes("econnrefused")
+      loweredMessage.includes("econnrefused") ||
+      loweredMessage.includes("no protocol") ||
+      loweredMessage.includes("unable to resolve host") ||
+      loweredMessage.includes("no address associated with hostname") ||
+      loweredMessage.includes("name_not_resolved") ||
+      loweredMessage.includes("net::") ||
+      loweredMessage.includes("sslip.io") ||
+      loweredMessage.includes("34-39-198-120") ||
+      loweredMessage.includes("34.39.198.120") ||
+      loweredMessage.includes("/api/")
     ) {
       return "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
     }
@@ -117,6 +159,42 @@ function resolveTransportErrorMessage(error: unknown) {
   }
 
   return "Não foi possível conectar ao servidor. Tente novamente.";
+}
+
+export function sanitizeUserFacingErrorMessage(message: unknown) {
+  const normalized = String(message ?? "").trim();
+  const fallback = "O app encontrou uma instabilidade temporária. Tente novamente.";
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  const loweredMessage = normalized.toLowerCase();
+  const hasTechnicalDetails =
+    loweredMessage.includes("unable to resolve host") ||
+    loweredMessage.includes("no address associated with hostname") ||
+    loweredMessage.includes("failed to fetch") ||
+    loweredMessage.includes("networkerror") ||
+    loweredMessage.includes("typeerror") ||
+    loweredMessage.includes("syntaxerror") ||
+    loweredMessage.includes("no protocol") ||
+    loweredMessage.includes("net::") ||
+    loweredMessage.includes("sslip.io") ||
+    loweredMessage.includes("localhost") ||
+    loweredMessage.includes("/api/") ||
+    loweredMessage.includes("http://") ||
+    loweredMessage.includes("https://") ||
+    loweredMessage.includes("34-39-198-120") ||
+    loweredMessage.includes("34.39.198.120");
+
+  if (hasTechnicalDetails) {
+    return "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
+  }
+
+  return normalized
+    .replace(/https?:\/\/\S+/gi, "o servidor")
+    .replace(/\b\d{1,3}(?:[.-]\d{1,3}){3}\b/g, "o servidor")
+    .replace(/\/api\/[^\s"'`]+/gi, "esta solicitação");
 }
 
 function readResponseHeader(
@@ -164,7 +242,7 @@ function maybeDispatchRequestError(message: string, suppressSystemStatus = false
 
   dispatchSystemStatus({
     kind: "error",
-    message,
+    message: sanitizeUserFacingErrorMessage(message),
   });
 }
 
@@ -172,7 +250,7 @@ export async function apiRequest<T>(
   path: string,
   { body, method = "GET", token, suppressSystemStatus = false }: ApiRequestOptions = {}
 ) {
-  const url = `${resolveApiBaseUrl()}${path}`;
+  const url = resolveApiRequestUrl(path);
   const headers = {
     ...(body ? { "Content-Type": "application/json" } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -200,7 +278,7 @@ export async function apiRequest<T>(
           message,
         });
       }
-      throw new Error(message);
+      throw new Error(sanitizeUserFacingErrorMessage(message));
     }
 
     const data = normalizeResponseData<T>(nativeResponse.data);
@@ -222,7 +300,7 @@ export async function apiRequest<T>(
       }
 
       throw new ApiRequestError(
-        message,
+        sanitizeUserFacingErrorMessage(message),
         nativeResponse.status,
         data as T | null,
         {
@@ -260,7 +338,7 @@ export async function apiRequest<T>(
         message,
       });
     }
-    throw new Error(message);
+    throw new Error(sanitizeUserFacingErrorMessage(message));
   } finally {
     globalThis.clearTimeout(timeoutId);
   }
@@ -283,7 +361,7 @@ export async function apiRequest<T>(
     }
 
     throw new ApiRequestError(
-      message,
+      sanitizeUserFacingErrorMessage(message),
       response.status,
       data as T | null,
       {
@@ -298,4 +376,5 @@ export async function apiRequest<T>(
   }
   return data as T;
 }
+
 

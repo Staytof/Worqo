@@ -107,3 +107,4 @@ export function LegalDocument({ compact = false }: LegalDocumentProps) {
     </div>
   );
 }
+

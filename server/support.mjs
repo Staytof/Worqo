@@ -366,7 +366,7 @@ export function reportChatConductForUser(userId, chat, body = {}) {
     contactUserId ? `ID do(a) usuário(a) denunciado(a): ${contactUserId}` : "",
     `Motivo: ${reason}`,
     details ? `Detalhes informados: ${details}` : "",
-    lastMessages ? `Últimas mensagens visíveis:\n${lastMessages}` : "",
+    lastMessages ? `últimas mensagens visíveis:\n${lastMessages}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -477,4 +477,5 @@ export function closeSupportTicketForAdmin(adminUserId, ticketId) {
 
   return mapSupportTicket(getSupportTicketByIdForAdmin(ticketId));
 }
+
 

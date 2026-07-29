@@ -15,6 +15,7 @@ import {
 import { motion } from "motion/react";
 import { useNavigate } from "react-router";
 import { loadGoogleMapsApi } from "../lib/googleMaps";
+import { requestNativePhotoPermission } from "../lib/nativeMediaPermissions";
 import { useApp } from "../context/AppContext";
 import { useErrorToast } from "../hooks/useErrorToast";
 import { formatCpf } from "../utils/helpers";
@@ -285,8 +286,8 @@ export function ProfileAccount() {
             bio,
             pixKeyType: pixKey.trim() ? "CPF" : null,
             pixKey: pixKey.trim() || null,
-            professions: parseTagInput(professionsInput),
-            skills: parseTagInput(skillsInput),
+            professions: parseTagInput(professionsInput).slice(0, 5),
+            skills: parseTagInput(skillsInput).slice(0, 10),
           }),
     });
 
@@ -350,6 +351,18 @@ export function ProfileAccount() {
     } finally {
       event.target.value = "";
     }
+  };
+
+  const handleChooseAvatar = async () => {
+    const allowed = await requestNativePhotoPermission();
+
+    if (!allowed) {
+      setStatusTone("error");
+      setStatusMessage("Ative a permissão de fotos para escolher sua imagem de perfil.");
+      return;
+    }
+
+    avatarInputRef.current?.click();
   };
 
   const handleLogout = async () => {
@@ -424,7 +437,7 @@ export function ProfileAccount() {
                 <p className="text-sm font-semibold text-slate-800">Foto do perfil</p>
                 <button
                   type="button"
-                  onClick={() => avatarInputRef.current?.click()}
+                  onClick={() => void handleChooseAvatar()}
                   className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-blue-600 transition hover:text-blue-700"
                 >
                   <Camera className="h-4 w-4" />
@@ -823,3 +836,4 @@ export function ProfileAccount() {
     </ProfileSectionLayout>
   );
 }
+

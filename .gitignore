@@ -21,3 +21,7 @@ android/app/build/
 *.zip
 *.keystore
 *.jks
+
+android/keystore.properties
+BLOCO_DEPLOY_VM_*.txt
+.vscode/

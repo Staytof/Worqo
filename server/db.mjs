@@ -1,4 +1,4 @@
-import fs from "node:fs";
+﻿import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { config } from "./config.mjs";
@@ -187,7 +187,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS service_reviews (
     id TEXT PRIMARY KEY,
-    service_request_id TEXT NOT NULL UNIQUE,
+    service_request_id TEXT NOT NULL,
     reviewer_user_id TEXT NOT NULL,
     target_user_id TEXT NOT NULL,
     rating INTEGER NOT NULL,
@@ -461,6 +461,71 @@ function ensureWorkerWithdrawalColumn(columnName, definition) {
   db.exec(`ALTER TABLE worker_withdrawals ADD COLUMN ${columnName} ${definition}`);
 }
 
+function ensureDirectionalServiceReviews() {
+  const indexes = db.prepare("PRAGMA index_list(service_reviews)").all();
+  const hasLegacyUniqueServiceRequestIndex = indexes.some((index) => {
+    if (!index?.unique) {
+      return false;
+    }
+
+    const columns = db
+      .prepare(`PRAGMA index_info(${JSON.stringify(index.name)})`)
+      .all()
+      .map((column) => column.name);
+
+    return columns.length === 1 && columns[0] === "service_request_id";
+  });
+
+  if (!hasLegacyUniqueServiceRequestIndex) {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS service_reviews_request_target_unique_idx
+      ON service_reviews (service_request_id, target_user_id);
+    `);
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE service_reviews RENAME TO service_reviews_legacy_single;
+
+    CREATE TABLE service_reviews (
+      id TEXT PRIMARY KEY,
+      service_request_id TEXT NOT NULL,
+      reviewer_user_id TEXT NOT NULL,
+      target_user_id TEXT NOT NULL,
+      rating INTEGER NOT NULL,
+      comment TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (service_request_id) REFERENCES service_requests (id) ON DELETE CASCADE,
+      FOREIGN KEY (reviewer_user_id) REFERENCES users (id) ON DELETE CASCADE,
+      FOREIGN KEY (target_user_id) REFERENCES users (id) ON DELETE CASCADE
+    );
+
+    INSERT INTO service_reviews (
+      id,
+      service_request_id,
+      reviewer_user_id,
+      target_user_id,
+      rating,
+      comment,
+      created_at
+    )
+    SELECT
+      id,
+      service_request_id,
+      reviewer_user_id,
+      target_user_id,
+      rating,
+      comment,
+      created_at
+    FROM service_reviews_legacy_single;
+
+    DROP TABLE service_reviews_legacy_single;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS service_reviews_request_target_unique_idx
+    ON service_reviews (service_request_id, target_user_id);
+  `);
+}
+
 ensureUserColumn("cpf_digits", "TEXT NOT NULL DEFAULT ''");
 ensureUserColumn("cpf_verified_at", "TEXT");
 ensureUserColumn("cpf_verified_name", "TEXT");
@@ -497,6 +562,7 @@ ensureServiceRequestColumn("asaas_payment_id", "TEXT");
 ensureServiceRequestColumn("asaas_payment_status", "TEXT");
 ensureServiceRequestColumn("asaas_payment_invoice_url", "TEXT");
 ensureServiceRequestColumn("asaas_payment_due_date", "TEXT");
+ensureServiceRequestColumn("asaas_payment_expires_at", "TEXT");
 ensureServiceRequestColumn("asaas_payment_copy_paste", "TEXT");
 ensureServiceRequestColumn("asaas_payment_qr_code_base64", "TEXT");
 ensureServiceRequestColumn("asaas_payment_received_at", "TEXT");
@@ -531,9 +597,13 @@ ensureTableColumn("service_chat_messages", "image_url", "TEXT");
 ensureTableColumn("community_post_chat_messages", "message_type", "TEXT NOT NULL DEFAULT 'text'");
 ensureTableColumn("community_post_chat_messages", "image_url", "TEXT");
 ensureUserNotificationColumn("meta_json", "TEXT NOT NULL DEFAULT '{}'");
+ensureTableColumn("user_push_devices", "last_attempt_at", "TEXT");
+ensureTableColumn("user_push_devices", "last_success_at", "TEXT");
 ensureWorkerWithdrawalColumn("mode", "TEXT NOT NULL DEFAULT 'instant'");
 ensureWorkerWithdrawalColumn("gross_amount_cents", "INTEGER NOT NULL DEFAULT 0");
 ensureWorkerWithdrawalColumn("fee_amount_cents", "INTEGER NOT NULL DEFAULT 0");
+
+ensureDirectionalServiceReviews();
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS service_requests_origin_community_chat_idx
@@ -705,3 +775,4 @@ if (duplicateCpfRows.length === 0) {
     "Não foi possível criar o índice único de CPF porque existem CPFs duplicados na base."
   );
 }
+

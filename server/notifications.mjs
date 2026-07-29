@@ -1,4 +1,4 @@
-import { db } from "./db.mjs";
+﻿import { db } from "./db.mjs";
 import { createId, nowIso } from "./security.mjs";
 import {
   buildStoredNotificationPayload,
@@ -157,3 +157,4 @@ export function consumePendingNotificationsForUser(userId) {
 
   return notifications.map(mapNotification);
 }
+

@@ -276,3 +276,4 @@ export function AvatarCropDialog({ source, onCancel, onConfirm }: AvatarCropDial
     </div>
   );
 }
+
