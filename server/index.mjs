@@ -13,6 +13,7 @@ import {
   storeClientErrorReport,
 } from "./observability.mjs";
 import {
+  getPushNotificationAvatarAsset,
   getPushNotificationStatusForUser,
   registerPushTokenForUser,
   sendPushTestForUser,
@@ -34,6 +35,7 @@ import {
 import {
   getPublicUserProfile,
   getSessionUser,
+  completeUserAppTour,
   completeGoogleOAuthLogin,
   createGoogleOAuthStartUrl,
   deleteUserAccount,
@@ -246,6 +248,7 @@ function assertSupportedClientRelease(request, pathname) {
     pathname === "/api/health" ||
     pathname === "/api/client-errors" ||
     pathname === "/api/asaas/webhook" ||
+    pathname.startsWith("/api/push-media/") ||
     pathname === "/api/auth/google/start" ||
     pathname === "/api/auth/google/callback"
   ) {
@@ -361,6 +364,29 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    const pushAvatarMatch =
+      request.method === "GET"
+        ? /^\/api\/push-media\/([a-zA-Z0-9-]{8,100})\/avatar$/.exec(url.pathname)
+        : null;
+
+    if (pushAvatarMatch) {
+      const asset = getPushNotificationAvatarAsset(pushAvatarMatch[1]);
+
+      if (!asset) {
+        json(response, 404, { error: "Imagem não encontrada." });
+        return;
+      }
+
+      response.writeHead(200, {
+        ...response.getHeaders(),
+        "Cache-Control": "public, max-age=86400",
+        "Content-Length": asset.body.length,
+        "Content-Type": asset.contentType,
+      });
+      response.end(asset.body);
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/client-errors") {
       const body = await readJsonBody(request, MEDIUM_JSON_BODY_OPTIONS);
       let userId = null;
@@ -417,6 +443,13 @@ const server = http.createServer(async (request, response) => {
         acceptTerms: body.acceptTerms,
         acceptPrivacy: body.acceptPrivacy,
         legalVersion: body.legalVersion,
+        rememberMe: body.rememberMe,
+        deviceId: body.deviceId,
+        deviceLabel: body.deviceLabel,
+        devicePlatform: body.devicePlatform,
+        timezone: body.timezone,
+        loginLocation: body.loginLocation,
+        loginIp: getClientIp(request),
       });
       json(response, 200, session);
       return;
@@ -430,6 +463,12 @@ const server = http.createServer(async (request, response) => {
         const googleUrl = createGoogleOAuthStartUrl({
           rememberMe: url.searchParams.get("rememberMe") !== "false",
           returnTo,
+          deviceId: url.searchParams.get("deviceId") || "",
+          deviceLabel: url.searchParams.get("deviceLabel") || "",
+          devicePlatform: url.searchParams.get("devicePlatform") || "",
+          timezone: url.searchParams.get("timezone") || "",
+          loginLocation: url.searchParams.get("loginLocation") || "",
+          loginIp: getClientIp(request),
         });
         redirect(response, googleUrl);
       } catch (error) {
@@ -487,7 +526,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/auth/login") {
       applyAuthRateLimit(request, "login");
       const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
-      const session = loginUser(body);
+      const session = loginUser({
+        ...body,
+        loginIp: getClientIp(request),
+      });
       json(response, 200, session);
       return;
     }
@@ -503,6 +545,13 @@ const server = http.createServer(async (request, response) => {
       const token = getBearerToken(request);
       revokeSession(token);
       json(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/me/tutorial/complete") {
+      const { user } = requireSessionUser(request);
+      const result = completeUserAppTour(user.id);
+      json(response, 200, result);
       return;
     }
 

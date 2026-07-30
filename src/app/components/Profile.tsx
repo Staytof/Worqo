@@ -17,6 +17,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
 import { getFirstNames, getInitials } from "../utils/helpers";
+import { AvailabilityScheduleCard } from "./profile/AvailabilityScheduleCard";
 import { formatJoinedDate } from "./profile/profile-utils";
 import { VerifiedBadge } from "./ui/verified-badge";
 
@@ -311,10 +312,8 @@ export function Profile() {
                   <Clock3 className="h-5 w-5 text-blue-500" />
                   <h2 className="font-bold text-slate-900">Disponibilidade</h2>
                 </div>
-                <div className="mt-4 worqo-flat-panel px-4 py-3">
-                  <p className="break-words text-sm font-semibold leading-relaxed text-slate-700">
-                    {user.availabilityNote}
-                  </p>
+                <div className="mt-4">
+                  <AvailabilityScheduleCard value={user.availabilityNote} />
                 </div>
               </section>
             ) : null}

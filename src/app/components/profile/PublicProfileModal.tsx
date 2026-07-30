@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Briefcase, Clock3, ShieldCheck, Sparkles, Star, X } from "lucide-react";
+import { Briefcase, ShieldCheck, Sparkles, Star, X } from "lucide-react";
 import { motion } from "motion/react";
 import { apiRequest } from "../../api/client";
 import { useApp } from "../../context/AppContext";
@@ -7,6 +7,7 @@ import { useErrorToast } from "../../hooks/useErrorToast";
 import type { PublicUserProfile, UserProfile } from "../../types";
 import { getFirstNames, getInitials } from "../../utils/helpers";
 import { VerifiedBadge } from "../ui/verified-badge";
+import { AvailabilityScheduleCard } from "./AvailabilityScheduleCard";
 import { formatJoinedDate } from "./profile-utils";
 
 type PublicProfileFallback = Partial<PublicUserProfile> & {
@@ -370,12 +371,12 @@ export function PublicProfileModal({
                         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                           Disponibilidade
                         </p>
-                        <p className="mt-2 flex items-start gap-2 text-xs font-semibold leading-relaxed text-slate-700">
-                          <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
-                          <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                            {visibleProfile.availabilityNote}
-                          </span>
-                        </p>
+                        <div className="mt-2">
+                          <AvailabilityScheduleCard
+                            value={visibleProfile.availabilityNote}
+                            compact
+                          />
+                        </div>
                       </div>
                     ) : null}
 

@@ -61,13 +61,18 @@ function getAppTourStorageKey(userId: string) {
 function AppUsageTour({
   steps,
   userId,
+  completedAt,
+  onComplete,
   onActiveStepChange,
 }: {
   steps: AppTourStep[];
   userId: string;
+  completedAt: string | null;
+  onComplete: () => Promise<unknown>;
   onActiveStepChange: (stepId: string | null) => void;
 }) {
   const navigate = useNavigate();
+  const completionSyncRef = useRef(false);
   const [isVisible, setIsVisible] = useState(false);
   const [isSkipConfirmOpen, setIsSkipConfirmOpen] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
@@ -79,9 +84,28 @@ function AppUsageTour({
       return;
     }
 
-    const hasFinishedTour = window.localStorage.getItem(getAppTourStorageKey(userId)) === "done";
-    setIsVisible(!hasFinishedTour);
-  }, [steps.length, userId]);
+    const storageKey = getAppTourStorageKey(userId);
+    const hasFinishedTourLocally = window.localStorage.getItem(storageKey) === "done";
+
+    if (completedAt) {
+      window.localStorage.setItem(storageKey, "done");
+      setIsVisible(false);
+      return;
+    }
+
+    if (hasFinishedTourLocally) {
+      setIsVisible(false);
+
+      if (!completionSyncRef.current) {
+        completionSyncRef.current = true;
+        void onComplete();
+      }
+      return;
+    }
+
+    completionSyncRef.current = false;
+    setIsVisible(true);
+  }, [completedAt, onComplete, steps.length, userId]);
 
   useEffect(() => {
     onActiveStepChange(isVisible && activeStep ? activeStep.id : null);
@@ -102,6 +126,7 @@ function AppUsageTour({
 
     onActiveStepChange(null);
     setIsVisible(false);
+    void onComplete();
   }
 
   function requestSkipTour() {
@@ -257,6 +282,7 @@ export function AppShell() {
     markNotificationRead,
     openChat,
     refreshSessionState,
+    completeAppTour,
   } = useApp();
   const isClientShell = user?.accountKind === "client";
   const isMapRoute = location.pathname === "/app" && !isClientShell;
@@ -819,6 +845,8 @@ export function AppShell() {
         <AppUsageTour
           steps={appTourSteps}
           userId={user.id}
+          completedAt={user.appTourCompletedAt}
+          onComplete={completeAppTour}
           onActiveStepChange={setActiveTourStepId}
         />
       ) : null}

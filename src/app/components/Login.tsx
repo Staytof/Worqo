@@ -8,6 +8,7 @@ import { Capacitor } from "@capacitor/core";
 import logoImg from "@/assets/logosup.png";
 import { resolveApiBaseUrl } from "../api/client";
 import { useApp } from "../context/AppContext";
+import { getDeviceIdentity } from "../lib/deviceIdentity";
 
 export function Login() {
   const navigate = useNavigate();
@@ -194,6 +195,11 @@ export function Login() {
     const baseUrl = resolveApiBaseUrl();
     const params = new URLSearchParams({
       rememberMe: rememberMe ? "true" : "false",
+    });
+    const deviceIdentity = getDeviceIdentity();
+
+    Object.entries(deviceIdentity).forEach(([key, value]) => {
+      params.set(key, value);
     });
 
     if (Capacitor.isNativePlatform()) {

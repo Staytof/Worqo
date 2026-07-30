@@ -3,6 +3,7 @@ import {
   Briefcase,
   CalendarDays,
   Camera,
+  Clock,
   LogOut,
   Mail,
   MapPin,
@@ -14,6 +15,13 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useNavigate } from "react-router";
+import {
+  availabilityDayOptions,
+  buildAvailabilityNote,
+  parseAvailabilitySchedule,
+  type AvailabilityDayId,
+  validateAvailabilitySchedule,
+} from "../lib/availability";
 import { loadGoogleMapsApi } from "../lib/googleMaps";
 import { requestNativePhotoPermission } from "../lib/nativeMediaPermissions";
 import { useApp } from "../context/AppContext";
@@ -65,58 +73,6 @@ function buildProfileFormSnapshot(user: ReturnType<typeof useApp>["state"]["user
 
 function resolvePlaceLabel(place: any) {
   return place?.formatted_address || place?.name || "";
-}
-
-const availabilityDayOptions = [
-  { id: "mon", short: "S", label: "Segunda", saved: "Seg" },
-  { id: "tue", short: "T", label: "Terça", saved: "Ter" },
-  { id: "wed", short: "Q", label: "Quarta", saved: "Qua" },
-  { id: "thu", short: "Q", label: "Quinta", saved: "Qui" },
-  { id: "fri", short: "S", label: "Sexta", saved: "Sex" },
-  { id: "sat", short: "S", label: "Sábado", saved: "Sáb" },
-  { id: "sun", short: "D", label: "Domingo", saved: "Dom" },
-];
-
-function parseAvailabilitySchedule(value: string) {
-  const normalized = value.toLocaleLowerCase("pt-BR");
-  const days = availabilityDayOptions
-    .filter((day) => {
-      const label = day.label.toLocaleLowerCase("pt-BR");
-      const saved = day.saved.toLocaleLowerCase("pt-BR");
-
-      return normalized.includes(label) || normalized.includes(saved);
-    })
-    .map((day) => day.id);
-
-  if (
-    normalized.includes("segunda") &&
-    normalized.includes("sexta") &&
-    (normalized.includes("à") || normalized.includes("a "))
-  ) {
-    return {
-      days: ["mon", "tue", "wed", "thu", "fri"],
-      startTime: value.match(/\b\d{1,2}:\d{2}\b/g)?.[0] ?? "",
-      endTime: value.match(/\b\d{1,2}:\d{2}\b/g)?.[1] ?? "",
-    };
-  }
-
-  const times = value.match(/\b\d{1,2}:\d{2}\b/g) ?? [];
-
-  return {
-    days,
-    startTime: times[0] ?? "",
-    endTime: times[1] ?? "",
-  };
-}
-
-function buildAvailabilityNote(days: string[], startTime: string, endTime: string) {
-  const selectedLabels = availabilityDayOptions
-    .filter((day) => days.includes(day.id))
-    .map((day) => day.saved);
-  const dayLabel = selectedLabels.join(", ");
-  const timeLabel = startTime && endTime ? `das ${startTime} às ${endTime}` : "";
-
-  return [dayLabel, timeLabel].filter(Boolean).join(", ");
 }
 
 export function ProfileAccount() {
@@ -260,6 +216,18 @@ export function ProfileAccount() {
   }, [user.id, profileFormSnapshot]);
 
   const handleSaveData = async () => {
+    const availabilityError = validateAvailabilitySchedule({
+      days: availabilityDays,
+      startTime: availabilityStartTime,
+      endTime: availabilityEndTime,
+    });
+
+    if (!isClientAccount && availabilityError) {
+      setStatusTone("error");
+      setStatusMessage(availabilityError);
+      return;
+    }
+
     setIsSaving(true);
     const nextAvailabilityNote = buildAvailabilityNote(
       availabilityDays,
@@ -304,7 +272,7 @@ export function ProfileAccount() {
     navigate(-1);
   };
 
-  const toggleAvailabilityDay = (dayId: string) => {
+  const toggleAvailabilityDay = (dayId: AvailabilityDayId) => {
     setAvailabilityDays((currentDays) =>
       currentDays.includes(dayId)
         ? currentDays.filter((currentDay) => currentDay !== dayId)
@@ -611,12 +579,29 @@ export function ProfileAccount() {
                 />
               </div>
 
-              <div>
-                <label className="ml-1 text-xs font-semibold text-slate-500">
-                  Disponibilidade
-                </label>
-                <div className="mt-2 rounded-[24px] border border-slate-200 bg-slate-50 p-3">
-                  <div className="flex items-center justify-between gap-2">
+              <div className="overflow-hidden rounded-[26px] border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2 text-slate-800">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-sm shadow-blue-200">
+                      <CalendarDays className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold">Disponibilidade</p>
+                      <p className="text-[11px] font-medium text-slate-500">
+                        Selecione seus dias e horários
+                      </p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-blue-700 shadow-sm">
+                    {availabilityDays.length} {availabilityDays.length === 1 ? "dia" : "dias"}
+                  </span>
+                </div>
+
+                <div className="mt-4 rounded-[22px] bg-white/80 p-3 shadow-sm ring-1 ring-inset ring-slate-100">
+                  <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Dias de atendimento
+                  </p>
+                  <div className="grid grid-cols-7 gap-1.5">
                     {availabilityDayOptions.map((day) => {
                       const isSelected = availabilityDays.includes(day.id);
 
@@ -627,10 +612,13 @@ export function ProfileAccount() {
                           onClick={() => toggleAvailabilityDay(day.id)}
                           title={day.label}
                           aria-pressed={isSelected}
-                          className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-black transition active:scale-95 ${
+                          aria-label={`${day.label}: ${
+                            isSelected ? "selecionado" : "não selecionado"
+                          }`}
+                          className={`flex aspect-square w-full items-center justify-center rounded-full text-xs font-black transition active:scale-95 ${
                             isSelected
-                              ? "bg-blue-600 text-white"
-                              : "bg-white text-slate-500 ring-1 ring-slate-200"
+                              ? "bg-blue-600 text-white shadow-sm shadow-blue-200"
+                              : "bg-slate-50 text-slate-400 ring-1 ring-inset ring-slate-200"
                           }`}
                         >
                           {day.short}
@@ -639,27 +627,36 @@ export function ProfileAccount() {
                     })}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <label>
-                      <span className="ml-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                        Início
+                  <div className="my-4 h-px bg-slate-100" />
+
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Clock className="h-4 w-4 text-blue-600" />
+                    <span className="text-xs font-bold">Horário de atendimento</span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <label className="min-w-0 rounded-2xl bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-200 focus-within:ring-blue-400">
+                      <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                        Das
                       </span>
                       <input
                         type="time"
                         value={availabilityStartTime}
                         onChange={(event) => setAvailabilityStartTime(event.target.value)}
-                        className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition-all focus:border-blue-500"
+                        aria-label="Horário inicial"
+                        className="mt-0.5 w-full min-w-0 bg-transparent text-sm font-black text-slate-800 outline-none"
                       />
                     </label>
-                    <label>
-                      <span className="ml-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                        Encerramento
+                    <span className="text-xs font-bold text-slate-300">até</span>
+                    <label className="min-w-0 rounded-2xl bg-slate-50 px-3 py-2.5 ring-1 ring-inset ring-slate-200 focus-within:ring-blue-400">
+                      <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                        Às
                       </span>
                       <input
                         type="time"
                         value={availabilityEndTime}
                         onChange={(event) => setAvailabilityEndTime(event.target.value)}
-                        className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 outline-none transition-all focus:border-blue-500"
+                        aria-label="Horário final"
+                        className="mt-0.5 w-full min-w-0 bg-transparent text-sm font-black text-slate-800 outline-none"
                       />
                     </label>
                   </div>

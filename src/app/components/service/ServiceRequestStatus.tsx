@@ -86,7 +86,10 @@ export function ServiceRequestStatus() {
 
   const request = activeServiceRequest;
   const isRequester = request?.currentUserRole === "requester";
-  const hasInterestedWorker = Boolean(request?.workerId || request?.workerName);
+  const hasPendingWorkerInterest = Boolean(
+    (request?.workerId || request?.workerName) &&
+      (request?.status === "assigned" || request?.status === "interest-received")
+  );
   const statusLabel = request ? formatStatus(request.status) : "";
   const createdAtLabel = request ? request.createdAtLabel || formatCreatedAt(request.createdAt) : "";
   const workerName = workerProfile?.fullName ?? request?.workerName ?? "Prestador(a) interessado(a)";
@@ -114,7 +117,7 @@ export function ServiceRequestStatus() {
   }, [request?.createdAt, request?.status]);
 
   useEffect(() => {
-    if (!request?.workerId || !sessionToken) {
+    if (!hasPendingWorkerInterest || !request?.workerId || !sessionToken) {
       setWorkerProfile(null);
       return;
     }
@@ -139,7 +142,7 @@ export function ServiceRequestStatus() {
     return () => {
       cancelled = true;
     };
-  }, [request?.workerId, sessionToken]);
+  }, [hasPendingWorkerInterest, request?.workerId, sessionToken]);
 
   if (!request || !isRequester) {
     return <Navigate to="/app" replace />;
@@ -175,7 +178,7 @@ export function ServiceRequestStatus() {
   };
 
   const handleAcceptWorker = async () => {
-    if (isAccepting || !hasInterestedWorker) {
+    if (isAccepting || !hasPendingWorkerInterest) {
       return;
     }
 
@@ -199,7 +202,7 @@ export function ServiceRequestStatus() {
   };
 
   const handleDeclineWorker = async () => {
-    if (isDeclining || !hasInterestedWorker) {
+    if (isDeclining || !hasPendingWorkerInterest) {
       return;
     }
 
@@ -280,7 +283,8 @@ export function ServiceRequestStatus() {
           </div>
         </section>
 
-        <section className="rounded-[28px] bg-neutral-50 p-4">
+        {hasPendingWorkerInterest ? (
+          <section className="rounded-[28px] bg-neutral-50 p-4">
           <div className="flex items-center gap-2">
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">
               <UserRound className="h-5 w-5" />
@@ -290,12 +294,11 @@ export function ServiceRequestStatus() {
                 Prestadores(as) interessados(as)
               </h2>
               <p className="text-xs font-semibold text-slate-500">
-                {hasInterestedWorker ? "1 interessado agora" : "Aguardando retorno"}
+                1 solicitação pendente
               </p>
             </div>
           </div>
 
-          {hasInterestedWorker ? (
             <div className="mt-4 rounded-[26px] bg-white p-3">
               <div className="flex items-center gap-3">
                 <div className="relative h-16 w-16 shrink-0 overflow-visible">
@@ -360,12 +363,8 @@ export function ServiceRequestStatus() {
                 </button>
               ) : null}
             </div>
-          ) : (
-            <div className="mt-4 rounded-[26px] bg-white p-4 text-sm font-bold text-slate-500">
-              Nenhum(a) prestador(a) interessado(a) ainda.
-            </div>
-          )}
-        </section>
+          </section>
+        ) : null}
 
         {timelinePreview.length > 0 ? (
           <section className="rounded-[28px] bg-neutral-50 p-4">

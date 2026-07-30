@@ -22,6 +22,8 @@ const ASAAS_PENDING_TRANSFER_STATUSES = new Set([
   "AWAITING_AUTHORIZATION",
 ]);
 const ASAAS_FAILED_TRANSFER_STATUSES = new Set(["FAILED", "CANCELLED"]);
+const ASAAS_OPEN_PAYMENT_STATUSES = new Set(["PENDING", "OVERDUE"]);
+const paymentSessionPromises = new Map();
 let cachedAsaasBalanceSnapshot = {
   balanceCents: null,
   syncedAt: null,
@@ -149,7 +151,7 @@ const markServiceRequestPaidStatement = db.prepare(
     UPDATE service_requests
     SET
       status = 'confirmed',
-      asaas_payment_id = COALESCE(NULLIF(asaas_payment_id, ''), ?),
+      asaas_payment_id = ?,
       asaas_payment_status = ?,
       asaas_payment_invoice_url = ?,
       asaas_payment_due_date = ?,
@@ -181,6 +183,17 @@ const clearServiceRequestPaymentSessionStatement = db.prepare(
       payment_currency = 'brl',
       updated_at = ?
     WHERE id = ?
+  `
+);
+
+const updateServiceRequestPaymentExpirationStatement = db.prepare(
+  `
+    UPDATE service_requests
+    SET
+      asaas_payment_expires_at = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND status = 'payment'
   `
 );
 
@@ -711,18 +724,32 @@ function isPaidAsaasPayment(payment) {
   return isPaidAsaasStatus(payment?.status) && !isReceivedInCashPayment(payment);
 }
 
-function resolvePixExpirationDate(qrCode) {
-  const rawExpiration = qrCode?.expirationDate ?? qrCode?.expiresAt ?? null;
+function createPixSessionExpirationDate() {
+  return new Date(Date.now() + PIX_PAYMENT_EXPIRES_IN_MS).toISOString();
+}
 
-  if (rawExpiration) {
-    const parsedExpiration = new Date(rawExpiration);
-
-    if (!Number.isNaN(parsedExpiration.getTime())) {
-      return parsedExpiration.toISOString();
-    }
+function normalizeStoredPixExpirationDate(value) {
+  if (!value) {
+    return createPixSessionExpirationDate();
   }
 
-  return new Date(Date.now() + PIX_PAYMENT_EXPIRES_IN_MS).toISOString();
+  const expirationTime = new Date(value).getTime();
+
+  if (!Number.isFinite(expirationTime)) {
+    return createPixSessionExpirationDate();
+  }
+
+  if (expirationTime <= Date.now()) {
+    return new Date(expirationTime).toISOString();
+  }
+
+  const maximumExpectedExpiration = Date.now() + PIX_PAYMENT_EXPIRES_IN_MS + 60_000;
+
+  if (expirationTime > maximumExpectedExpiration) {
+    return createPixSessionExpirationDate();
+  }
+
+  return new Date(expirationTime).toISOString();
 }
 
 function isPaymentSessionExpired(row) {
@@ -1024,14 +1051,67 @@ function ensureWorkerPixKeyReadyFromRow(requestRow) {
   }
 }
 
-async function fetchPixQrCode(paymentId) {
+async function fetchPixQrCode(paymentId, storedExpirationDate = null) {
   const qrCode = await asaasRequest(`/payments/${paymentId}/pixQrCode`);
-  const expirationDate = resolvePixExpirationDate(qrCode);
+  const expirationDate = storedExpirationDate
+    ? normalizeStoredPixExpirationDate(storedExpirationDate)
+    : createPixSessionExpirationDate();
 
   return {
     copyPaste: qrCode?.payload ?? qrCode?.copyPaste ?? null,
     qrCodeBase64: qrCode?.encodedImage ?? qrCode?.image ?? null,
     expirationDate,
+  };
+}
+
+async function listAsaasPaymentsForRequest(requestId) {
+  const response = await asaasRequest("/payments", {
+    searchParams: {
+      externalReference: requestId,
+      limit: 100,
+      offset: 0,
+    },
+  });
+
+  const payments = Array.isArray(response?.data) ? response.data : [];
+
+  return payments.filter(
+    (payment) =>
+      !payment?.deleted &&
+      String(payment?.externalReference ?? "").trim() === requestId
+  );
+}
+
+async function cancelOtherOpenAsaasPaymentsForRequest(requestId, preservedPaymentId) {
+  const payments = await listAsaasPaymentsForRequest(requestId);
+
+  for (const payment of payments) {
+    const paymentId = String(payment?.id ?? "").trim();
+    const paymentStatus = String(payment?.status ?? "").trim().toUpperCase();
+
+    if (
+      !paymentId ||
+      paymentId === preservedPaymentId ||
+      !ASAAS_OPEN_PAYMENT_STATUSES.has(paymentStatus)
+    ) {
+      continue;
+    }
+
+    await asaasRequest(`/payments/${paymentId}`, {
+      method: "DELETE",
+    });
+  }
+}
+
+function createPaymentSessionResponse(payment, qrCode = null) {
+  return {
+    paymentId: String(payment?.id ?? "").trim(),
+    paymentStatus: String(payment?.status ?? "PENDING").trim().toUpperCase(),
+    invoiceUrl: payment?.invoiceUrl ?? null,
+    dueDate: payment?.dueDate ?? null,
+    pixCopyPaste: qrCode?.copyPaste ?? null,
+    pixQrCodeBase64: qrCode?.qrCodeBase64 ?? null,
+    expiresAt: qrCode?.expirationDate ?? null,
   };
 }
 
@@ -1043,6 +1123,18 @@ function syncServiceRequestPaymentFromAsaasPayment(requestId, payment, qrCode = 
   const paymentId = String(payment?.id ?? "").trim() || null;
   const paymentStatus = String(payment?.status ?? "").trim().toUpperCase() || null;
   const paymentIsPaid = isPaidAsaasPayment(payment);
+  const currentPaymentId = String(currentRequestRow?.asaas_payment_id ?? "").trim();
+  const currentPaymentIsPaid = isPaidAsaasStatus(previousPaymentStatus);
+
+  if (
+    currentPaymentId &&
+    paymentId &&
+    currentPaymentId !== paymentId &&
+    (currentPaymentIsPaid || !paymentIsPaid)
+  ) {
+    return;
+  }
+
   const invoiceUrl = payment?.invoiceUrl ?? null;
   const dueDate = payment?.dueDate ?? null;
   const expiresAt = qrCode?.expirationDate ?? null;
@@ -1167,6 +1259,16 @@ function syncServiceRequestPaymentFromAsaasPayment(requestId, payment, qrCode = 
       "Seu Pix venceu. Gere uma nova cobrança no Worko para continuar o atendimento."
     );
   }
+
+  if (paymentIsPaid && paymentId) {
+    void cancelOtherOpenAsaasPaymentsForRequest(requestId, paymentId).catch((error) => {
+      console.warn("Falha ao remover cobranças Pix pendentes duplicadas.", {
+        requestId,
+        paymentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 }
 
 async function refreshTransferStatusIfNeeded(withdrawalRow) {
@@ -1260,8 +1362,9 @@ export function isPixWithdrawalReadyForUser(userId) {
   );
 }
 
-export async function createAsaasPaymentForServiceRequest(userId, requestId) {
+async function createAsaasPaymentForServiceRequestInternal(userId, requestId) {
   const requestRow = selectServiceRequestPaymentStatement.get(requestId);
+  const excludedPaymentIds = new Set();
 
   if (!requestRow || requestRow.requester_user_id !== userId) {
     throw new HttpError(404, "Atendimento não encontrado para pagamento.");
@@ -1293,6 +1396,26 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
     requestRow.asaas_payment_copy_paste &&
     !isPaymentSessionExpired(requestRow)
   ) {
+    const relatedPayments = await listAsaasPaymentsForRequest(requestId);
+    const paidPayment = relatedPayments.find(isPaidAsaasPayment);
+
+    if (paidPayment) {
+      syncServiceRequestPaymentFromAsaasPayment(requestId, paidPayment);
+      return createPaymentSessionResponse(paidPayment);
+    }
+
+    const normalizedExpiration = normalizeStoredPixExpirationDate(
+      requestRow.asaas_payment_expires_at
+    );
+
+    if (normalizedExpiration !== requestRow.asaas_payment_expires_at) {
+      updateServiceRequestPaymentExpirationStatement.run(
+        normalizedExpiration,
+        nowIso(),
+        requestId
+      );
+    }
+
     return {
       paymentId: requestRow.asaas_payment_id,
       paymentStatus: requestRow.asaas_payment_status ?? "PENDING",
@@ -1300,7 +1423,7 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
       dueDate: requestRow.asaas_payment_due_date ?? null,
       pixCopyPaste: requestRow.asaas_payment_copy_paste ?? null,
       pixQrCodeBase64: requestRow.asaas_payment_qr_code_base64 ?? null,
-      expiresAt: requestRow.asaas_payment_expires_at ?? null,
+      expiresAt: normalizedExpiration,
     };
   }
 
@@ -1310,9 +1433,19 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
     isPaymentSessionExpired(requestRow)
   ) {
     try {
+      const latestPayment = await asaasRequest(
+        `/payments/${requestRow.asaas_payment_id}`
+      );
+
+      if (isPaidAsaasPayment(latestPayment)) {
+        syncServiceRequestPaymentFromAsaasPayment(requestId, latestPayment);
+        return createPaymentSessionResponse(latestPayment);
+      }
+
       await asaasRequest(`/payments/${requestRow.asaas_payment_id}`, {
         method: "DELETE",
       });
+      excludedPaymentIds.add(requestRow.asaas_payment_id);
     } catch {
       // Se a cobrança antiga já não puder ser removida, seguimos criando uma nova sessão.
     }
@@ -1321,6 +1454,48 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
   }
 
   const customerId = await ensureAsaasCustomerForUser(userId);
+  const existingPayments = await listAsaasPaymentsForRequest(requestId);
+  const reusablePayment =
+    existingPayments.find(
+      (payment) =>
+        !excludedPaymentIds.has(String(payment?.id ?? "")) &&
+        isPaidAsaasPayment(payment)
+    ) ??
+    existingPayments.find(
+      (payment) =>
+        !excludedPaymentIds.has(String(payment?.id ?? "")) &&
+        String(payment?.status ?? "").trim().toUpperCase() === "PENDING"
+    );
+
+  if (reusablePayment?.id) {
+    if (isPaidAsaasPayment(reusablePayment)) {
+      syncServiceRequestPaymentFromAsaasPayment(requestId, reusablePayment);
+      return createPaymentSessionResponse(reusablePayment);
+    }
+
+    const qrCode = await fetchPixQrCode(reusablePayment.id);
+
+    updateServiceRequestAsaasPaymentStatement.run(
+      reusablePayment.id,
+      String(reusablePayment.status ?? "PENDING").trim().toUpperCase(),
+      reusablePayment.invoiceUrl ?? null,
+      reusablePayment.dueDate ?? null,
+      qrCode.expirationDate,
+      qrCode.copyPaste,
+      qrCode.qrCodeBase64,
+      null,
+      subtotalCents,
+      feeCents,
+      totalCents,
+      String(reusablePayment.currency ?? "brl").toLowerCase(),
+      nowIso(),
+      requestId
+    );
+
+    await cancelOtherOpenAsaasPaymentsForRequest(requestId, reusablePayment.id);
+    return createPaymentSessionResponse(reusablePayment, qrCode);
+  }
+
   const payment = await asaasRequest("/payments", {
     method: "POST",
     body: {
@@ -1356,15 +1531,28 @@ export async function createAsaasPaymentForServiceRequest(userId, requestId) {
     requestId
   );
 
-  return {
-    paymentId: payment.id,
-    paymentStatus: String(payment.status ?? "PENDING").trim().toUpperCase(),
-    invoiceUrl: payment.invoiceUrl ?? null,
-    dueDate: payment.dueDate ?? null,
-    pixCopyPaste: qrCode.copyPaste,
-    pixQrCodeBase64: qrCode.qrCodeBase64,
-    expiresAt: qrCode.expirationDate ?? null,
-  };
+  return createPaymentSessionResponse(payment, qrCode);
+}
+
+export async function createAsaasPaymentForServiceRequest(userId, requestId) {
+  const lockKey = `${userId}:${requestId}`;
+  const existingPromise = paymentSessionPromises.get(lockKey);
+
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const paymentSessionPromise = createAsaasPaymentForServiceRequestInternal(
+    userId,
+    requestId
+  ).finally(() => {
+    if (paymentSessionPromises.get(lockKey) === paymentSessionPromise) {
+      paymentSessionPromises.delete(lockKey);
+    }
+  });
+
+  paymentSessionPromises.set(lockKey, paymentSessionPromise);
+  return paymentSessionPromise;
 }
 
 export async function refreshAsaasPaymentForServiceRequest(userId, requestId) {
@@ -1378,13 +1566,25 @@ export async function refreshAsaasPaymentForServiceRequest(userId, requestId) {
     throw new HttpError(409, "Ainda não existe uma cobrança Pix vinculada a este pedido.");
   }
 
-  const payment = await asaasRequest(`/payments/${requestRow.asaas_payment_id}`);
+  const relatedPayments = await listAsaasPaymentsForRequest(requestId);
+  const payment =
+    relatedPayments.find(isPaidAsaasPayment) ??
+    relatedPayments.find(
+      (candidate) =>
+        String(candidate?.id ?? "").trim() === requestRow.asaas_payment_id
+    ) ??
+    (await asaasRequest(`/payments/${requestRow.asaas_payment_id}`));
+  const effectivePaymentId =
+    String(payment?.id ?? "").trim() || requestRow.asaas_payment_id;
   const paymentStatus = String(payment?.status ?? "").trim().toUpperCase();
   let qrCode = null;
 
   if (!isPaidAsaasStatus(paymentStatus)) {
     try {
-      qrCode = await fetchPixQrCode(requestRow.asaas_payment_id);
+      qrCode = await fetchPixQrCode(
+        effectivePaymentId,
+        requestRow.asaas_payment_expires_at
+      );
     } catch {
       qrCode = null;
     }
@@ -1393,7 +1593,7 @@ export async function refreshAsaasPaymentForServiceRequest(userId, requestId) {
   syncServiceRequestPaymentFromAsaasPayment(requestId, payment, qrCode);
 
   return {
-    paymentId: requestRow.asaas_payment_id,
+    paymentId: effectivePaymentId,
     paymentStatus,
     status: paymentStatus,
     invoiceUrl: payment?.invoiceUrl ?? requestRow.asaas_payment_invoice_url ?? null,

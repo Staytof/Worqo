@@ -62,9 +62,11 @@ const requestSelection = `
     service_requests.*,
     service_chats.id AS chat_id,
     requester.full_name AS requester_name,
+    requester.avatar AS requester_avatar,
     requester.cpf_verified_at AS requester_cpf_verified_at,
     requester.cpf_digits AS requester_cpf_digits,
     worker.full_name AS worker_name,
+    worker.avatar AS worker_avatar,
     worker.cpf_verified_at AS worker_cpf_verified_at,
     worker.cpf_digits AS worker_cpf_digits
   FROM service_requests
@@ -1651,7 +1653,12 @@ export function startServiceRequestFromCommunityChatForUser(user, chatId) {
   createUserNotification(
     communityChat.post_author_user_id,
     "service-details-sent",
-    `${getNotificationFirstName(user.fullName, "Cliente")} quer fechar um serviço pelo chat.`
+    `${getNotificationFirstName(user.fullName, "Cliente")} quer fechar um serviço pelo chat.`,
+    {
+      title: "Novo acordo",
+      avatar: user.avatar ?? null,
+      path: "/app/chat",
+    }
   );
 
   const serviceChat = selectServiceChatByRequestId.get(requestId);
@@ -1714,6 +1721,7 @@ export function takeServiceRequestForUser(userId, requestId) {
     `${getNotificationFirstName(assignedRequest.worker_name, "Prestador(a)")} demonstrou interesse no seu pedido.`,
     {
       title: "Prestador(a) interessado(a)",
+      avatar: assignedRequest.worker_avatar ?? null,
       path: "/app/orders",
     }
   );
@@ -1745,7 +1753,11 @@ export function acceptServiceRequestForUser(userId, requestId) {
     createUserNotification(
       request.worker_user_id,
       "service-accepted",
-      `${getNotificationFirstName(request.requester_name, "Cliente")} te aceitou para o serviço.`
+      `${getNotificationFirstName(request.requester_name, "Cliente")} te aceitou para o serviço.`,
+      {
+        avatar: request.requester_avatar ?? null,
+        path: "/app/chat",
+      }
     );
 
     createServiceRequestEvent(requestId, {
@@ -1792,7 +1804,11 @@ export function declineAssignedServiceRequestForUser(userId, requestId, options 
       "requester-continued-search",
       options?.blockWorkerForTenMinutes
         ? "Cliente recusou esta solicitação. Ela ficará indisponível para você por alguns minutos."
-        : "Cliente decidiu continuar procurando."
+        : "Cliente decidiu continuar procurando.",
+      {
+        avatar: request.requester_avatar ?? null,
+        path: "/app",
+      }
     );
   }
 
@@ -1839,7 +1855,11 @@ export function submitServiceRequestDetailsForUser(userId, requestId, payload) {
     createUserNotification(
       request.worker_user_id,
       "service-details-sent",
-      `${getNotificationFirstName(request.requester_name, "Cliente")} enviou valor, data e horário para o atendimento.`
+      `${getNotificationFirstName(request.requester_name, "Cliente")} enviou valor, data e horário para o atendimento.`,
+      {
+        avatar: request.requester_avatar ?? null,
+        path: "/app/chat",
+      }
     );
   }
 
@@ -1883,7 +1903,11 @@ export function confirmServiceRequestPaymentForUser(userId, requestId) {
   createUserNotification(
     request.requester_user_id,
     "payment-ready",
-    `${getNotificationFirstName(request.worker_name, "Profissional")} confirmou os detalhes. O Pix já pode ser pago.`
+    `${getNotificationFirstName(request.worker_name, "Profissional")} confirmou os detalhes. O Pix já pode ser pago.`,
+    {
+      avatar: request.worker_avatar ?? null,
+      path: "/app/orders",
+    }
   );
 
   return getActiveServiceRequestForUser(userId);
@@ -1944,7 +1968,11 @@ export function markServiceRequestWorkerArrivedForUser(userId, requestId) {
   createUserNotification(
     request.worker_user_id,
     "service-arrival-confirmed",
-    `${getNotificationFirstName(request.requester_name, "Cliente")} confirmou sua chegada ao atendimento.`
+    `${getNotificationFirstName(request.requester_name, "Cliente")} confirmou sua chegada ao atendimento.`,
+    {
+      avatar: request.requester_avatar ?? null,
+      path: "/app",
+    }
   );
 
   return {
@@ -2105,7 +2133,11 @@ export async function deleteServiceRequestForUser(userId, requestId) {
     createUserNotification(
       request.worker_user_id,
       "service-cancelled",
-      "A cliente cancelou a solicitação de serviço."
+      "A cliente cancelou a solicitação de serviço.",
+      {
+        avatar: request.requester_avatar ?? null,
+        path: "/app",
+      }
     );
   }
 
@@ -2185,7 +2217,11 @@ export async function releaseServiceRequestPaymentForUser(userId, requestId, pay
     createUserNotification(
       request.worker_user_id,
       "wallet-available",
-      "Serviço concluído. O valor deste atendimento já está disponível para saque."
+      "Serviço concluído. O valor deste atendimento já está disponível para saque.",
+      {
+        avatar: request.requester_avatar ?? null,
+        path: "/app/wallet",
+      }
     );
 
     db.exec("COMMIT");
@@ -2244,7 +2280,11 @@ export function reviewClientForCompletedServiceForUser(userId, requestId, payloa
   createUserNotification(
     request.requester_user_id,
     "service-completed",
-    "O(a) prestador(a) avaliou seu perfil neste atendimento."
+    "O(a) prestador(a) avaliou seu perfil neste atendimento.",
+    {
+      avatar: request.worker_avatar ?? null,
+      path: "/app/profile",
+    }
   );
 
   return { ok: true };
@@ -2297,7 +2337,14 @@ export function openServiceRequestDisputeForUser(userId, requestId, payload) {
       "dispute-opened",
       actorRole === "requester"
         ? "A cliente abriu uma disputa neste atendimento."
-        : "O(a) profissional abriu uma disputa neste atendimento."
+        : "O(a) profissional abriu uma disputa neste atendimento.",
+      {
+        avatar:
+          actorRole === "requester"
+            ? request.requester_avatar ?? null
+            : request.worker_avatar ?? null,
+        path: actorRole === "requester" ? "/app" : "/app/orders",
+      }
     );
   }
 

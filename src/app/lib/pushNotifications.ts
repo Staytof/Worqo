@@ -10,7 +10,7 @@ import {
 import { apiRequest } from "../api/client";
 import { isNativeAppRuntime } from "./nativeRuntime";
 
-const PUSH_CHANNEL_ID = "worqo-general";
+const PUSH_CHANNEL_ID = "worqo-general-v2";
 const PUSH_TOKEN_STORAGE_KEY = "worqo-native-fcm-token-v1";
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [0, 2_000, 8_000, 30_000];
 
@@ -105,6 +105,7 @@ export async function initializeNativePushNotifications({
     importance: 5,
     visibility: 1,
     vibration: true,
+    sound: "default",
   }).catch(() => undefined);
 
   const permissions = await PushNotifications.requestPermissions().catch(() => null);
@@ -192,6 +193,10 @@ export async function initializeNativePushNotifications({
 
   const handleOnline = () => refreshStoredToken();
   window.addEventListener("online", handleOnline);
+
+  if (latestToken) {
+    void registerTokenWithRetry(latestToken);
+  }
 
   await PushNotifications.register().catch((error) => {
     console.warn("Não foi possível registrar este aparelho para notificações.", error);

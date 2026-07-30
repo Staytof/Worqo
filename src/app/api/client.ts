@@ -2,11 +2,32 @@ import { Capacitor, CapacitorHttp } from "@capacitor/core";
 
 const clientRelease = (import.meta.env.VITE_CLIENT_RELEASE ?? "").trim();
 const DEFAULT_REQUEST_TIMEOUT_MS = 12_000;
+const TRANSPORT_FAILURE_THRESHOLD_MS = 8_000;
+const TRANSPORT_RESUME_GRACE_MS = 12_000;
+const TRANSPORT_ALERT_COOLDOWN_MS = 60_000;
 const NATIVE_API_BASE_URL = "https://34-39-198-120.sslip.io";
 const configuredApiBaseUrl = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+let transportFailureStartedAt: number | null = null;
+let lastTransportAlertAt = 0;
+let transportResumeGraceUntil = Date.now() + TRANSPORT_RESUME_GRACE_MS;
 
 export const WORQO_SYSTEM_STATUS_EVENT = "worqo-system-status";
 export const WORQO_SYSTEM_STATUS_DURATION_MS = 4000;
+
+function beginTransportResumeGrace() {
+  transportResumeGraceUntil = Date.now() + TRANSPORT_RESUME_GRACE_MS;
+  transportFailureStartedAt = null;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("focus", beginTransportResumeGrace);
+  window.addEventListener("online", beginTransportResumeGrace);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      beginTransportResumeGrace();
+    }
+  });
+}
 
 export function resolveApiBaseUrl() {
   if (Capacitor.isNativePlatform()) {
@@ -246,6 +267,47 @@ function maybeDispatchRequestError(message: string, suppressSystemStatus = false
   });
 }
 
+function recordHealthyTransport(suppressSystemStatus = false) {
+  transportFailureStartedAt = null;
+
+  if (!suppressSystemStatus) {
+    dispatchSystemStatus({ kind: "healthy" });
+  }
+}
+
+function maybeDispatchTransportFailure(message: string, suppressSystemStatus = false) {
+  if (suppressSystemStatus || typeof window === "undefined") {
+    return;
+  }
+
+  const now = Date.now();
+  const pageIsHidden = typeof document !== "undefined" && document.visibilityState !== "visible";
+  const deviceIsOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+
+  if (pageIsHidden || deviceIsOffline || now < transportResumeGraceUntil) {
+    transportFailureStartedAt = null;
+    return;
+  }
+
+  if (transportFailureStartedAt === null) {
+    transportFailureStartedAt = now;
+    return;
+  }
+
+  if (
+    now - transportFailureStartedAt < TRANSPORT_FAILURE_THRESHOLD_MS ||
+    now - lastTransportAlertAt < TRANSPORT_ALERT_COOLDOWN_MS
+  ) {
+    return;
+  }
+
+  lastTransportAlertAt = now;
+  dispatchSystemStatus({
+    kind: "server-unreachable",
+    message,
+  });
+}
+
 export async function apiRequest<T>(
   path: string,
   { body, method = "GET", token, suppressSystemStatus = false }: ApiRequestOptions = {}
@@ -272,12 +334,7 @@ export async function apiRequest<T>(
       });
     } catch (error) {
       const message = resolveTransportErrorMessage(error);
-      if (!suppressSystemStatus) {
-        dispatchSystemStatus({
-          kind: "server-unreachable",
-          message,
-        });
-      }
+      maybeDispatchTransportFailure(message, suppressSystemStatus);
       throw new Error(sanitizeUserFacingErrorMessage(message));
     }
 
@@ -310,9 +367,7 @@ export async function apiRequest<T>(
       );
     }
 
-    if (!suppressSystemStatus) {
-      dispatchSystemStatus({ kind: "healthy" });
-    }
+    recordHealthyTransport(suppressSystemStatus);
     return data as T;
   }
 
@@ -332,12 +387,7 @@ export async function apiRequest<T>(
     });
   } catch (error) {
     const message = resolveTransportErrorMessage(error);
-    if (!suppressSystemStatus) {
-      dispatchSystemStatus({
-        kind: "server-unreachable",
-        message,
-      });
-    }
+    maybeDispatchTransportFailure(message, suppressSystemStatus);
     throw new Error(sanitizeUserFacingErrorMessage(message));
   } finally {
     globalThis.clearTimeout(timeoutId);
@@ -371,9 +421,7 @@ export async function apiRequest<T>(
     );
   }
 
-  if (!suppressSystemStatus) {
-    dispatchSystemStatus({ kind: "healthy" });
-  }
+  recordHealthyTransport(suppressSystemStatus);
   return data as T;
 }
 

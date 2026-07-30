@@ -80,6 +80,7 @@ export type UserProfile = {
   legalAcceptedVersion: string | null;
   verifiedChannel: VerificationMethod | null;
   emailVerifiedAt: string | null;
+  appTourCompletedAt: string | null;
   hasCompletedProfileSetup: boolean;
   pixKeyType: PixKeyType | null;
   pixKey: string;

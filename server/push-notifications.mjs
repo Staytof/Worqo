@@ -5,11 +5,13 @@ import { config } from "./config.mjs";
 import { createId, nowIso } from "./security.mjs";
 
 const FCM_AUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
-const FCM_CHANNEL_ID = "worqo-general";
+const FCM_CHANNEL_ID = "worqo-general-v2";
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60_000;
 const TRANSIENT_RETRY_DELAYS_MS = [750, 2_000];
 const METADATA_TOKEN_ENDPOINT =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts";
+const PUSH_AVATAR_PATH_PREFIX = "/api/push-media/";
+const MAX_PUSH_AVATAR_BYTES = 1024 * 1024;
 
 const selectActivePushDevicesByUserStatement = db.prepare(
   `
@@ -85,6 +87,17 @@ const disablePushDeviceStatement = db.prepare(
   `
 );
 
+const disableOtherPushDevicesForUserStatement = db.prepare(
+  `
+    UPDATE user_push_devices
+    SET
+      disabled_at = ?,
+      updated_at = ?,
+      last_error = 'Conta vinculada a outro aparelho.'
+    WHERE user_id = ? AND token <> ? AND disabled_at IS NULL
+  `
+);
+
 const markPushDeviceErrorStatement = db.prepare(
   `
     UPDATE user_push_devices
@@ -105,6 +118,15 @@ const deletePushDeviceStatement = db.prepare(
   `
     DELETE FROM user_push_devices
     WHERE user_id = ? AND token = ?
+  `
+);
+
+const selectPushNotificationAvatarStatement = db.prepare(
+  `
+    SELECT meta_json
+    FROM user_notifications
+    WHERE id = ?
+    LIMIT 1
   `
 );
 
@@ -356,6 +378,57 @@ function truncatePushBody(message) {
   return normalized.length > 160 ? `${normalized.slice(0, 157).trimEnd()}...` : normalized;
 }
 
+function buildPushBody(notification) {
+  const message = normalizeText(notification?.message);
+  const title = normalizeText(notification?.title);
+
+  if (notification?.kind !== "chat-message" || !message) {
+    return message;
+  }
+
+  const separatorIndex = message.indexOf(":");
+
+  if (separatorIndex <= 0) {
+    return message;
+  }
+
+  const messageSender = normalizeText(message.slice(0, separatorIndex));
+  const senderFirstName = title.split(/\s+/)[0] ?? "";
+
+  if (
+    messageSender.localeCompare(title, "pt-BR", { sensitivity: "base" }) === 0 ||
+    messageSender.localeCompare(senderFirstName, "pt-BR", { sensitivity: "base" }) === 0
+  ) {
+    return normalizeText(message.slice(separatorIndex + 1));
+  }
+
+  return message;
+}
+
+function resolvePublicPushAvatarUrl(notification) {
+  const avatar = normalizeText(notification?.avatar);
+
+  if (/^https:\/\//i.test(avatar)) {
+    return avatar;
+  }
+
+  if (!/^data:image\/(?:jpeg|jpg|png|webp);base64,/i.test(avatar)) {
+    return "";
+  }
+
+  const publicOrigin = [config.apiPublicUrl, config.appBaseUrl]
+    .map((value) => normalizeText(value).replace(/\/$/, ""))
+    .find((value) => /^https:\/\//i.test(value));
+
+  if (!publicOrigin || !notification?.id) {
+    return "";
+  }
+
+  return `${publicOrigin}${PUSH_AVATAR_PATH_PREFIX}${encodeURIComponent(
+    notification.id
+  )}/avatar`;
+}
+
 function toStringDataEntries(data) {
   return Object.fromEntries(
     Object.entries(data)
@@ -378,7 +451,9 @@ function toStringDataEntries(data) {
   );
 }
 
-function buildPushMessagePayload(token, notification) {
+export function buildPushMessagePayload(token, notification) {
+  const body = truncatePushBody(buildPushBody(notification));
+  const remoteImage = resolvePublicPushAvatarUrl(notification);
   const data = toStringDataEntries({
     notificationId: notification.id,
     kind: notification.kind,
@@ -386,6 +461,7 @@ function buildPushMessagePayload(token, notification) {
     message: notification.message,
     chatId: notification.chatId ?? "",
     path: notification.path ?? "",
+    avatar: remoteImage,
     createdAt: notification.createdAt,
   });
 
@@ -394,7 +470,8 @@ function buildPushMessagePayload(token, notification) {
       token,
       notification: {
         title: notification.title,
-        body: notification.message,
+        body,
+        ...(remoteImage ? { image: remoteImage } : {}),
       },
       data,
       android: {
@@ -408,6 +485,7 @@ function buildPushMessagePayload(token, notification) {
           default_sound: true,
           default_vibrate_timings: true,
           notification_priority: "PRIORITY_HIGH",
+          ...(remoteImage ? { image: remoteImage } : {}),
         },
       },
     },
@@ -415,12 +493,6 @@ function buildPushMessagePayload(token, notification) {
 }
 
 function extractFcmErrorCode(data) {
-  const errorStatus = normalizeText(data?.error?.status);
-
-  if (errorStatus) {
-    return errorStatus;
-  }
-
   const details = Array.isArray(data?.error?.details) ? data.error.details : [];
 
   for (const detail of details) {
@@ -431,11 +503,11 @@ function extractFcmErrorCode(data) {
     }
   }
 
-  return "";
+  return normalizeText(data?.error?.status);
 }
 
 function isPermanentPushTokenError(errorCode) {
-  return errorCode === "UNREGISTERED" || errorCode === "INVALID_ARGUMENT";
+  return errorCode === "UNREGISTERED";
 }
 
 function isTransientPushFailure(response) {
@@ -577,6 +649,8 @@ export function registerPushTokenForUser(userId, payload) {
     timestamp
   );
 
+  disableOtherPushDevicesForUserStatement.run(timestamp, timestamp, userId, token);
+
   return { ok: true };
 }
 
@@ -604,6 +678,48 @@ export function getPushNotificationStatusForUser(userId) {
       lastSuccessAt: device.last_success_at || null,
       lastError: device.last_error || null,
     })),
+  };
+}
+
+export function getPushNotificationAvatarAsset(notificationId) {
+  const normalizedId = normalizeText(notificationId);
+
+  if (!/^[a-zA-Z0-9-]{8,100}$/.test(normalizedId)) {
+    return null;
+  }
+
+  const row = selectPushNotificationAvatarStatement.get(normalizedId);
+
+  if (!row?.meta_json) {
+    return null;
+  }
+
+  let meta;
+
+  try {
+    meta = JSON.parse(row.meta_json);
+  } catch {
+    return null;
+  }
+
+  const avatar = normalizeText(meta?.avatar);
+  const match =
+    /^data:image\/(jpeg|jpg|png|webp);base64,([a-zA-Z0-9+/=\s]+)$/i.exec(avatar);
+
+  if (!match) {
+    return null;
+  }
+
+  const contentType = match[1].toLowerCase() === "jpg" ? "image/jpeg" : `image/${match[1].toLowerCase()}`;
+  const body = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+
+  if (body.length === 0 || body.length > MAX_PUSH_AVATAR_BYTES) {
+    return null;
+  }
+
+  return {
+    body,
+    contentType,
   };
 }
 

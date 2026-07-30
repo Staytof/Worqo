@@ -12,6 +12,9 @@ import {
   parseCurrencyValue,
 } from "../../utils/helpers";
 
+const PIX_SESSION_DURATION_MS = 15 * 60 * 1000;
+const PAYMENT_STATUS_POLL_INTERVAL_MS = 3000;
+
 function resolveQrCodeImage(value: string | null | undefined) {
   if (!value) {
     return "";
@@ -63,7 +66,14 @@ export function ServicePayment() {
   const [showConfirmedState, setShowConfirmedState] = useState(false);
   const redirectTimeoutRef = useRef<number | null>(null);
   const slowValidationTimeoutRef = useRef<number | null>(null);
-  const renewalKeyRef = useRef<string | null>(null);
+  const initialSessionRequestIdRef = useRef<string | null>(null);
+  const statusRefreshInFlightRef = useRef(false);
+  const activeRequestIdRef = useRef(activeServiceRequest?.id ?? null);
+  const createPaymentSessionRef = useRef(createServicePaymentSession);
+  const refreshPaymentStatusRef = useRef(refreshServicePaymentStatus);
+  activeRequestIdRef.current = activeServiceRequest?.id ?? null;
+  createPaymentSessionRef.current = createServicePaymentSession;
+  refreshPaymentStatusRef.current = refreshServicePaymentStatus;
   useErrorToast(error);
 
   const baseServiceAmount = parseCurrencyValue(activeServiceRequest?.details?.price ?? "");
@@ -82,7 +92,9 @@ export function ServicePayment() {
     }
 
     const timestamp = new Date(pixExpiresAt).getTime();
-    return Number.isFinite(timestamp) ? timestamp : null;
+    return Number.isFinite(timestamp)
+      ? Math.min(timestamp, Date.now() + PIX_SESSION_DURATION_MS)
+      : null;
   }, [pixExpiresAt]);
   const pixRemainingLabel = useMemo(() => {
     if (pixRemainingMs === null) {
@@ -94,6 +106,7 @@ export function ServicePayment() {
     const seconds = totalSeconds % 60;
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }, [pixRemainingMs]);
+  const isPixExpired = pixExpirationTime !== null && pixRemainingMs === 0;
 
   useEffect(() => {
     return () => {
@@ -112,30 +125,37 @@ export function ServicePayment() {
       return;
     }
 
-    let cancelled = false;
+    const requestId = activeServiceRequest.id;
+
+    if (initialSessionRequestIdRef.current === requestId) {
+      return;
+    }
+
+    initialSessionRequestIdRef.current = requestId;
 
     async function loadPaymentSession() {
       setIsLoadingPayment(true);
       setError("");
       setMessage("");
 
-      const result = await createServicePaymentSession();
+      const result = await createPaymentSessionRef.current();
 
-      if (cancelled) {
+      if (activeRequestIdRef.current !== requestId) {
         return;
       }
 
       setIsLoadingPayment(false);
 
       if (!result.ok) {
+        initialSessionRequestIdRef.current = null;
         setError(result.error ?? "Não conseguimos carregar o Pix deste pedido agora.");
+        setShowRefreshAction(true);
         return;
       }
 
       setPixCopyPaste(result.pixCopyPaste ?? "");
       setPixQrCodeBase64(result.pixQrCodeBase64 ?? "");
       setPixExpiresAt(result.expiresAt ?? null);
-      renewalKeyRef.current = null;
       setMessage("O pagamento será validado automaticamente assim que o Pix for compensado.");
       setShowRefreshAction(false);
 
@@ -149,11 +169,7 @@ export function ServicePayment() {
     }
 
     void loadPaymentSession();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeServiceRequest?.id, activeServiceRequest?.status, createServicePaymentSession]);
+  }, [activeServiceRequest?.id, activeServiceRequest?.status]);
 
   useEffect(() => {
     if (!pixExpirationTime || activeServiceRequest?.status !== "payment") {
@@ -178,40 +194,15 @@ export function ServicePayment() {
       !pixExpirationTime ||
       pixRemainingMs === null ||
       pixRemainingMs > 0 ||
-      activeServiceRequest?.status !== "payment" ||
-      isLoadingPayment ||
-      renewalKeyRef.current === pixExpiresAt
+      activeServiceRequest?.status !== "payment"
     ) {
       return;
     }
 
-    renewalKeyRef.current = pixExpiresAt;
-
-    void (async () => {
-      setIsLoadingPayment(true);
-      setMessage("Código Pix expirado. Gerando um novo código...");
-      setError("");
-
-      const result = await createServicePaymentSession();
-
-      setIsLoadingPayment(false);
-
-      if (!result.ok) {
-        setError(result.error ?? "Não conseguimos renovar o Pix agora.");
-        return;
-      }
-
-      setPixCopyPaste(result.pixCopyPaste ?? "");
-      setPixQrCodeBase64(result.pixQrCodeBase64 ?? "");
-      setPixExpiresAt(result.expiresAt ?? null);
-      renewalKeyRef.current = null;
-      setMessage("Novo código Pix gerado. Pague dentro do prazo exibido.");
-    })();
+    setShowRefreshAction(true);
+    setMessage("O prazo deste código terminou. Gere um novo Pix para continuar.");
   }, [
     activeServiceRequest?.status,
-    createServicePaymentSession,
-    isLoadingPayment,
-    pixExpiresAt,
     pixExpirationTime,
     pixRemainingMs,
   ]);
@@ -221,26 +212,50 @@ export function ServicePayment() {
       return;
     }
 
-    const intervalId = window.setInterval(() => {
-      if (document.hidden || isRefreshingPayment) {
+    let disposed = false;
+
+    const refreshInBackground = async () => {
+      if (
+        disposed ||
+        document.hidden ||
+        statusRefreshInFlightRef.current
+      ) {
         return;
       }
 
-      void (async () => {
-        setIsRefreshingPayment(true);
-        const result = await refreshServicePaymentStatus();
-        setIsRefreshingPayment(false);
+      statusRefreshInFlightRef.current = true;
 
+      try {
+        const result = await refreshPaymentStatusRef.current();
         if (result.ok && result.message) {
-          setMessage(result.message);
+          setMessage((current) =>
+            current === result.message ? current : result.message ?? current
+          );
         }
-      })();
-    }, 5000);
+      } finally {
+        statusRefreshInFlightRef.current = false;
+      }
+    };
+
+    const initialTimeoutId = window.setTimeout(
+      () => void refreshInBackground(),
+      1500
+    );
+    const intervalId = window.setInterval(
+      () => void refreshInBackground(),
+      PAYMENT_STATUS_POLL_INTERVAL_MS
+    );
 
     return () => {
+      disposed = true;
+      window.clearTimeout(initialTimeoutId);
       window.clearInterval(intervalId);
     };
-  }, [activeServiceRequest?.id, activeServiceRequest?.status, isRefreshingPayment, refreshServicePaymentStatus, showConfirmedState]);
+  }, [
+    activeServiceRequest?.id,
+    activeServiceRequest?.status,
+    showConfirmedState,
+  ]);
 
   useEffect(() => {
     if (activeServiceRequest?.status !== "confirmed" || showConfirmedState) {
@@ -304,13 +319,15 @@ export function ServicePayment() {
   };
 
   const handleRefreshPayment = async () => {
-    if (isRefreshingPayment) {
+    if (isRefreshingPayment || statusRefreshInFlightRef.current) {
       return;
     }
 
+    statusRefreshInFlightRef.current = true;
     setIsRefreshingPayment(true);
     setError("");
-    const result = await refreshServicePaymentStatus();
+    const result = await refreshPaymentStatusRef.current();
+    statusRefreshInFlightRef.current = false;
     setIsRefreshingPayment(false);
 
     if (!result.ok) {
@@ -319,6 +336,29 @@ export function ServicePayment() {
     }
 
     setMessage(result.message ?? "Seguimos aguardando a confirmação do Pix.");
+  };
+
+  const handleRenewPayment = async () => {
+    if (isLoadingPayment || statusRefreshInFlightRef.current) {
+      return;
+    }
+
+    setIsLoadingPayment(true);
+    setError("");
+    setMessage("Gerando um novo código Pix...");
+    const result = await createPaymentSessionRef.current();
+    setIsLoadingPayment(false);
+
+    if (!result.ok) {
+      setError(result.error ?? "Não conseguimos gerar um novo Pix agora.");
+      return;
+    }
+
+    setPixCopyPaste(result.pixCopyPaste ?? "");
+    setPixQrCodeBase64(result.pixQrCodeBase64 ?? "");
+    setPixExpiresAt(result.expiresAt ?? null);
+    setShowRefreshAction(false);
+    setMessage("Novo código Pix gerado. Pague dentro do prazo exibido.");
   };
 
   const handleCopyPix = async () => {
@@ -423,11 +463,7 @@ export function ServicePayment() {
           </div>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm sm:p-8"
-        >
+        <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
           <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
             <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm">
@@ -483,12 +519,26 @@ export function ServicePayment() {
               {showRefreshAction ? (
                 <button
                   type="button"
-                  onClick={handleRefreshPayment}
-                  disabled={isRefreshingPayment}
+                  onClick={() =>
+                    void (isPixExpired
+                      ? handleRenewPayment()
+                      : handleRefreshPayment())
+                  }
+                  disabled={isRefreshingPayment || isLoadingPayment}
                   className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <RefreshCcw className={`h-4 w-4 ${isRefreshingPayment ? "animate-spin" : ""}`} />
-                  {isRefreshingPayment ? "Verificando..." : "Atualizar pagamento"}
+                  <RefreshCcw
+                    className={`h-4 w-4 ${
+                      isRefreshingPayment || isLoadingPayment ? "animate-spin" : ""
+                    }`}
+                  />
+                  {isLoadingPayment
+                    ? "Gerando..."
+                    : isRefreshingPayment
+                      ? "Verificando..."
+                      : isPixExpired
+                        ? "Gerar novo Pix"
+                        : "Atualizar pagamento"}
                 </button>
               ) : null}
             </div>
@@ -505,7 +555,7 @@ export function ServicePayment() {
               {error}
             </div>
           ) : null}
-        </motion.div>
+        </div>
       </div>
     </div>
   );

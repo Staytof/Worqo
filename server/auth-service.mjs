@@ -24,6 +24,7 @@ import {
   validateVerificationCode,
 } from "./validators.mjs";
 import { HttpError } from "./utils.mjs";
+import { createUserNotification } from "./notifications.mjs";
 
 const defaultSessionDurationMs = 1000 * 60 * 60 * 24 * 30;
 const rememberedSessionDurationMs = 1000 * 60 * 60 * 24 * 365;
@@ -291,6 +292,7 @@ function mapUser(row) {
     averageRating: reviewMeta.averageRating,
     reviewsCount: reviewMeta.reviewsCount,
     recentReviews: reviewMeta.recentReviews,
+    appTourCompletedAt: row.app_tour_completed_at ?? null,
     createdAt: row.created_at ?? "",
   };
 }
@@ -438,20 +440,144 @@ async function dispatchVerification({ channel, fullName, destination, userId }) 
   };
 }
 
-function createSession(userId, { rememberMe = false } = {}) {
+function normalizeSessionText(value, maxLength = 160) {
+  return String(value ?? "").trim().slice(0, maxLength);
+}
+
+function normalizeDeviceMetadata(options = {}) {
+  const timezone = normalizeSessionText(options.timezone, 100);
+  const timezoneLocations = {
+    "America/Sao_Paulo": "São Paulo, Brasil",
+    "America/Fortaleza": "Fortaleza, Brasil",
+    "America/Manaus": "Manaus, Brasil",
+    "America/Recife": "Recife, Brasil",
+    "America/Bahia": "Salvador, Brasil",
+    "America/Belem": "Belém, Brasil",
+    "America/Cuiaba": "Cuiabá, Brasil",
+    "America/Porto_Velho": "Porto Velho, Brasil",
+    "America/Rio_Branco": "Rio Branco, Brasil",
+  };
+
+  return {
+    deviceId: normalizeSessionText(options.deviceId, 160),
+    deviceLabel: normalizeSessionText(options.deviceLabel, 160) || "Novo dispositivo",
+    devicePlatform: normalizeSessionText(options.devicePlatform, 40) || "unknown",
+    timezone,
+    loginIp: normalizeSessionText(options.loginIp, 100),
+    loginLocation:
+      normalizeSessionText(options.loginLocation, 180) ||
+      timezoneLocations[timezone] ||
+      "Localização aproximada indisponível",
+  };
+}
+
+function formatSecurityLoginDate(timestamp, timezone) {
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+      timeZone: timezone || "America/Sao_Paulo",
+    }).format(new Date(timestamp));
+  } catch {
+    return new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(timestamp));
+  }
+}
+
+function createSession(userId, { rememberMe = false, ...deviceOptions } = {}) {
   const token = createSessionToken();
   const tokenHash = hashCode(token);
   const now = Date.now();
+  const timestamp = nowIso();
+  const device = normalizeDeviceMetadata(deviceOptions);
   const expiresAt = new Date(
     now + (rememberMe ? rememberedSessionDurationMs : defaultSessionDurationMs)
   ).toISOString();
+  const activeSessions = db
+    .prepare(
+      `
+        SELECT *
+        FROM sessions
+        WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+        ORDER BY created_at DESC
+      `
+    )
+    .all(userId, timestamp);
+  const previousSession = activeSessions[0] ?? null;
+  const isDifferentDevice =
+    Boolean(previousSession) &&
+    (!previousSession.device_id ||
+      !device.deviceId ||
+      previousSession.device_id !== device.deviceId);
+
+  if (isDifferentDevice) {
+    const formattedDate = formatSecurityLoginDate(timestamp, device.timezone);
+
+    createUserNotification(
+      userId,
+      "security-device-change",
+      `Sua conta foi acessada em ${device.deviceLabel}, em ${device.loginLocation}, em ${formattedDate}. A sessão anterior foi encerrada por segurança.`,
+      {
+        title: "Acesso em outro aparelho",
+        deviceLabel: device.deviceLabel,
+        devicePlatform: device.devicePlatform,
+        loginLocation: device.loginLocation,
+        loginIp: device.loginIp,
+        replacedAt: timestamp,
+        path: "/app/notifications",
+      }
+    );
+  }
 
   db.prepare(
     `
-      INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      UPDATE sessions
+      SET
+        revoked_at = ?,
+        revoked_reason = 'device-replaced',
+        replaced_device_label = ?,
+        replaced_login_location = ?,
+        replaced_at = ?
+      WHERE user_id = ? AND revoked_at IS NULL
     `
-  ).run(createId(), userId, tokenHash, expiresAt, nowIso());
+  ).run(
+    timestamp,
+    device.deviceLabel,
+    device.loginLocation,
+    timestamp,
+    userId
+  );
+
+  db.prepare(
+    `
+      INSERT INTO sessions (
+        id,
+        user_id,
+        token_hash,
+        expires_at,
+        created_at,
+        device_id,
+        device_label,
+        device_platform,
+        login_ip,
+        login_location
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    createId(),
+    userId,
+    tokenHash,
+    expiresAt,
+    timestamp,
+    device.deviceId,
+    device.deviceLabel,
+    device.devicePlatform,
+    device.loginIp,
+    device.loginLocation
+  );
 
   return token;
 }
@@ -642,6 +768,12 @@ function consumeGoogleOAuthState(state) {
   return {
     rememberMe: Boolean(stateRow.remember_me),
     returnTo: stateRow.return_to || "",
+    deviceId: stateRow.device_id || "",
+    deviceLabel: stateRow.device_label || "",
+    devicePlatform: stateRow.device_platform || "",
+    timezone: stateRow.timezone || "",
+    loginIp: stateRow.login_ip || "",
+    loginLocation: stateRow.login_location || "",
   };
 }
 
@@ -891,7 +1023,16 @@ function upsertGoogleUser(profile) {
   return getUserById(user.id);
 }
 
-export function createGoogleOAuthStartUrl({ rememberMe = true, returnTo = "" } = {}) {
+export function createGoogleOAuthStartUrl({
+  rememberMe = true,
+  returnTo = "",
+  deviceId = "",
+  deviceLabel = "",
+  devicePlatform = "",
+  timezone = "",
+  loginIp = "",
+  loginLocation = "",
+} = {}) {
   ensureGoogleOAuthConfigured();
 
   const state = createSessionToken();
@@ -901,14 +1042,32 @@ export function createGoogleOAuthStartUrl({ rememberMe = true, returnTo = "" } =
   db.prepare(
     `
       INSERT INTO oauth_login_states (
-        id, provider, state_hash, remember_me, return_to, expires_at, created_at
-      ) VALUES (?, 'google', ?, ?, ?, ?, ?)
+        id,
+        provider,
+        state_hash,
+        remember_me,
+        return_to,
+        device_id,
+        device_label,
+        device_platform,
+        timezone,
+        login_ip,
+        login_location,
+        expires_at,
+        created_at
+      ) VALUES (?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
   ).run(
     createId(),
     hashCode(state),
     rememberMe ? 1 : 0,
     normalizedReturnTo,
+    normalizeSessionText(deviceId, 160),
+    normalizeSessionText(deviceLabel, 160),
+    normalizeSessionText(devicePlatform, 40),
+    normalizeSessionText(timezone, 100),
+    normalizeSessionText(loginIp, 100),
+    normalizeSessionText(loginLocation, 180),
     expiresAt,
     nowIso()
   );
@@ -931,7 +1090,16 @@ export async function completeGoogleOAuthLogin({ code, state }) {
     throw new HttpError(400, "Retorno do Google incompleto. Tente novamente.");
   }
 
-  const { rememberMe, returnTo } = consumeGoogleOAuthState(state);
+  const {
+    rememberMe,
+    returnTo,
+    deviceId,
+    deviceLabel,
+    devicePlatform,
+    timezone,
+    loginIp,
+    loginLocation,
+  } = consumeGoogleOAuthState(state);
   const googleTokens = await requestGoogleToken(String(code));
   const profile =
     readGoogleProfileFromIdToken(googleTokens.id_token) ??
@@ -948,7 +1116,15 @@ export async function completeGoogleOAuthLogin({ code, state }) {
     };
   }
 
-  const token = createSession(user.id, { rememberMe });
+  const token = createSession(user.id, {
+    rememberMe,
+    deviceId,
+    deviceLabel,
+    devicePlatform,
+    timezone,
+    loginIp,
+    loginLocation,
+  });
 
   return {
     token,
@@ -1054,7 +1230,20 @@ export async function sendVerificationCode({ userId }) {
   };
 }
 
-function verifyEmailAccount({ code, userId, acceptTerms, acceptPrivacy, legalVersion }) {
+function verifyEmailAccount({
+  code,
+  userId,
+  acceptTerms,
+  acceptPrivacy,
+  legalVersion,
+  rememberMe,
+  deviceId,
+  deviceLabel,
+  devicePlatform,
+  timezone,
+  loginIp,
+  loginLocation,
+}) {
   validateVerificationCode(code);
 
   if (!acceptTerms || !acceptPrivacy) {
@@ -1121,7 +1310,15 @@ function verifyEmailAccount({ code, userId, acceptTerms, acceptPrivacy, legalVer
     userId
   );
 
-  const token = createSession(userId);
+  const token = createSession(userId, {
+    rememberMe: Boolean(rememberMe),
+    deviceId,
+    deviceLabel,
+    devicePlatform,
+    timezone,
+    loginIp,
+    loginLocation,
+  });
   return {
     token,
     user: mapUser(getUserById(userId)),
@@ -1134,6 +1331,13 @@ export function verifyAccount({
   acceptTerms,
   acceptPrivacy,
   legalVersion,
+  rememberMe,
+  deviceId,
+  deviceLabel,
+  devicePlatform,
+  timezone,
+  loginIp,
+  loginLocation,
 }) {
   const user = getUserById(userId);
 
@@ -1147,10 +1351,27 @@ export function verifyAccount({
     acceptTerms,
     acceptPrivacy,
     legalVersion,
+    rememberMe,
+    deviceId,
+    deviceLabel,
+    devicePlatform,
+    timezone,
+    loginIp,
+    loginLocation,
   });
 }
 
-export function loginUser({ email, password, rememberMe }) {
+export function loginUser({
+  email,
+  password,
+  rememberMe,
+  deviceId,
+  deviceLabel,
+  devicePlatform,
+  timezone,
+  loginIp,
+  loginLocation,
+}) {
   const normalizedEmail = normalizeEmail(email ?? "");
   const normalizedPassword = String(password ?? "").trim();
   const user = getUserByEmail(normalizedEmail);
@@ -1184,7 +1405,15 @@ export function loginUser({ email, password, rememberMe }) {
     });
   }
 
-  const token = createSession(user.id, { rememberMe: Boolean(rememberMe) });
+  const token = createSession(user.id, {
+    rememberMe: Boolean(rememberMe),
+    deviceId,
+    deviceLabel,
+    devicePlatform,
+    timezone,
+    loginIp,
+    loginLocation,
+  });
   return {
     token,
     user: mapUser(user),
@@ -1201,13 +1430,31 @@ export function getSessionUser(token) {
       `
         SELECT *
         FROM sessions
-        WHERE sessions.token_hash = ? AND sessions.revoked_at IS NULL
+        WHERE sessions.token_hash = ?
         LIMIT 1
       `
     )
     .get(hashCode(token));
 
   if (!session) {
+    throw new HttpError(401, "Sessão inválida.");
+  }
+
+  if (session.revoked_at) {
+    if (session.revoked_reason === "device-replaced") {
+      throw new HttpError(
+        401,
+        "Sua conta foi acessada em outro aparelho. Entre novamente para usar este dispositivo.",
+        {
+          code: "SESSION_REPLACED",
+          deviceLabel: session.replaced_device_label || "outro aparelho",
+          loginLocation:
+            session.replaced_login_location || "localização aproximada indisponível",
+          replacedAt: session.replaced_at || session.revoked_at,
+        }
+      );
+    }
+
     throw new HttpError(401, "Sessão inválida.");
   }
 
@@ -1257,6 +1504,29 @@ export function revokeSession(token) {
       WHERE token_hash = ? AND revoked_at IS NULL
     `
   ).run(nowIso(), hashCode(token));
+}
+
+export function completeUserAppTour(userId) {
+  const user = getUserById(userId);
+
+  if (!user || user.deleted_at) {
+    throw new HttpError(404, "Conta não encontrada.");
+  }
+
+  const completedAt = user.app_tour_completed_at || nowIso();
+
+  db.prepare(
+    `
+      UPDATE users
+      SET app_tour_completed_at = COALESCE(app_tour_completed_at, ?), updated_at = ?
+      WHERE id = ?
+    `
+  ).run(completedAt, nowIso(), userId);
+
+  return {
+    user: mapUser(getUserById(userId)),
+    completedAt,
+  };
 }
 
 export function getPublicUserProfile(targetUserId) {

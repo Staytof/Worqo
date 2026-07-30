@@ -9,6 +9,7 @@ import {
 import { ApiRequestError, apiRequest, dispatchSystemStatus } from "../api/client";
 import { seedChats, seedPins, seedPosts } from "../data/seed";
 import { deliverNativeNotifications } from "../lib/nativeNotifications";
+import { getDeviceIdentity } from "../lib/deviceIdentity";
 import { isNativeAppRuntime } from "../lib/nativeRuntime";
 import { unregisterNativePushDevice } from "../lib/pushNotifications";
 import {
@@ -198,6 +199,7 @@ type AppContextValue = {
   releaseServicePayment: (payload: ServiceReviewPayload) => Promise<Result>;
   listCompletedServiceRequests: () => Promise<CompletedServiceRequestsResult>;
   refreshSessionState: () => Promise<Result>;
+  completeAppTour: () => Promise<Result>;
   dismissNotification: (notificationId: string) => void;
   removeNotification: (notificationId: string) => void;
   markNotificationRead: (notificationId: string) => void;
@@ -304,6 +306,7 @@ function hydrateUserProfile(user: Partial<UserProfile> | null | undefined): User
     legalAcceptedVersion: user.legalAcceptedVersion ?? null,
     verifiedChannel: user.verifiedChannel ?? null,
     emailVerifiedAt: user.emailVerifiedAt ?? null,
+    appTourCompletedAt: user.appTourCompletedAt ?? null,
     hasCompletedProfileSetup: Boolean(user.hasCompletedProfileSetup),
     pixKeyType: user.pixKeyType ?? null,
     pixKey: user.pixKey ?? "",
@@ -928,6 +931,46 @@ function getServiceChatAccent(type: ServicePin["type"]): ChatThread["accent"] {
   return "blue";
 }
 
+function getSessionReplacementDetails(error: unknown) {
+  if (!(error instanceof ApiRequestError) || error.status !== 401) {
+    return null;
+  }
+
+  const payload =
+    error.data && typeof error.data === "object"
+      ? (error.data as { details?: Record<string, unknown> })
+      : null;
+  const details = payload?.details;
+
+  if (!details || details.code !== "SESSION_REPLACED") {
+    return null;
+  }
+
+  const deviceLabel = String(details.deviceLabel ?? "outro aparelho").trim();
+  const loginLocation = String(
+    details.loginLocation ?? "localização aproximada indisponível"
+  ).trim();
+  const replacedAt = String(details.replacedAt ?? "").trim();
+  let formattedDate = "";
+
+  if (replacedAt) {
+    try {
+      formattedDate = new Intl.DateTimeFormat("pt-BR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(new Date(replacedAt));
+    } catch {
+      formattedDate = "";
+    }
+  }
+
+  return {
+    message: `Sua conta foi acessada em ${deviceLabel}, em ${loginLocation}${
+      formattedDate ? `, em ${formattedDate}` : ""
+    }. Este aparelho foi desconectado por segurança.`,
+  };
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(hydrateState);
   const liveStateRef = useRef(state);
@@ -1149,6 +1192,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        const replacement = getSessionReplacementDetails(error);
+
+        if (replacement) {
+          clearPersistedStateStorage();
+          dispatchSystemStatus({
+            kind: "error",
+            message: replacement.message,
+          });
+        }
+
         setState((current) => {
           const shouldClearSession =
             error instanceof ApiRequestError && error.status === 401;
@@ -1192,10 +1245,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    let refreshInFlight = false;
+    let invalidSessionHandled = false;
+
     const intervalId = window.setInterval(() => {
       const liveState = liveStateRef.current;
 
       if (
+        refreshInFlight ||
+        invalidSessionHandled ||
         !liveState.sessionToken ||
         !liveState.isAuthenticated ||
         (document.hidden && !isNativeAppRuntime())
@@ -1203,30 +1261,69 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      void Promise.all([
-        resolveRemoteAppState(
-          liveState.sessionToken,
-          liveState.activeServiceRequest,
-          liveState.chats,
-          liveState.pins,
-          liveState.posts,
-          liveState.activeChatId
-        ),
-        loadRemoteSessionUser(liveState.sessionToken).catch(() => liveState.user),
-        consumeRemoteNotifications(liveState.sessionToken),
-      ]).then(([remoteAppState, remoteUser, notifications]) => {
-        void deliverNativeNotifications(notifications);
+      refreshInFlight = true;
 
-        setState((current) => ({
-          ...current,
-          user: hydrateUserProfile(remoteUser) ?? current.user,
-          pins: remoteAppState.pins,
-          posts: remoteAppState.posts,
-          chats: remoteAppState.chats,
-          notifications: mergeNotifications(current.notifications, notifications),
-          activeServiceRequest: remoteAppState.activeServiceRequest,
-        }));
-      });
+      void (async () => {
+        try {
+          const [remoteAppState, remoteUser, notifications] = await Promise.all([
+            resolveRemoteAppState(
+              liveState.sessionToken,
+              liveState.activeServiceRequest,
+              liveState.chats,
+              liveState.pins,
+              liveState.posts,
+              liveState.activeChatId
+            ),
+            loadRemoteSessionUser(liveState.sessionToken),
+            consumeRemoteNotifications(liveState.sessionToken),
+          ]);
+
+          void deliverNativeNotifications(notifications);
+
+          setState((current) => ({
+            ...current,
+            user: hydrateUserProfile(remoteUser) ?? current.user,
+            pins: remoteAppState.pins,
+            posts: remoteAppState.posts,
+            chats: remoteAppState.chats,
+            notifications: mergeNotifications(current.notifications, notifications),
+            activeServiceRequest: remoteAppState.activeServiceRequest,
+          }));
+        } catch (error) {
+          if (!(error instanceof ApiRequestError) || error.status !== 401) {
+            return;
+          }
+
+          invalidSessionHandled = true;
+          const replacement = getSessionReplacementDetails(error);
+          clearPersistedStateStorage();
+
+          setState((current) => ({
+            ...current,
+            authReady: true,
+            isAuthenticated: false,
+            sessionToken: null,
+            user: null,
+            pins: [],
+            posts: [],
+            chats: [],
+            notifications: [],
+            pendingVerification: null,
+            onboardingStep: "login",
+            activeChatId: null,
+            activeServiceRequest: null,
+          }));
+
+          dispatchSystemStatus({
+            kind: "error",
+            message:
+              replacement?.message ??
+              "Sua sessão terminou. Entre novamente para continuar com segurança.",
+          });
+        } finally {
+          refreshInFlight = false;
+        }
+      })();
 
       if (
         liveState.activeChatId &&
@@ -1252,7 +1349,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const normalizedPassword = String(password ?? "").trim();
       const session = await apiRequest<SessionResponse>("/api/auth/login", {
         method: "POST",
-        body: { email: normalizedEmail, password: normalizedPassword, rememberMe },
+        body: {
+          email: normalizedEmail,
+          password: normalizedPassword,
+          rememberMe,
+          ...getDeviceIdentity(),
+        },
       });
       const remoteAppState = session.user.isAdmin
         ? createEmptyRemoteAppState()
@@ -1338,6 +1440,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
       activeChatId: null,
       activeServiceRequest: null,
     }));
+  };
+
+  const completeAppTour = async (): Promise<Result> => {
+    if (!state.sessionToken) {
+      return {
+        ok: false,
+        error: "Não encontramos uma sessão válida para concluir as dicas.",
+      };
+    }
+
+    try {
+      const data = await apiRequest<{ user: UserProfile }>(
+        "/api/me/tutorial/complete",
+        {
+          method: "POST",
+          token: state.sessionToken,
+          suppressSystemStatus: true,
+        }
+      );
+
+      setState((current) => ({
+        ...current,
+        user: hydrateUserProfile(data.user) ?? current.user,
+      }));
+
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos registrar a conclusão das dicas.",
+      };
+    }
   };
 
   const deleteAccount = async (): Promise<Result> => {
@@ -1475,6 +1612,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           acceptTerms,
           acceptPrivacy,
           legalVersion,
+          rememberMe: state.rememberSession,
+          ...getDeviceIdentity(),
         },
       });
       const remoteAppState = session.user.isAdmin
@@ -2272,6 +2411,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
         method: "PATCH",
         token: state.sessionToken,
       });
+
+      const normalizedPaymentStatus = String(
+        paymentState.status ?? paymentState.paymentStatus ?? ""
+      )
+        .trim()
+        .toUpperCase();
+      const providerConfirmedPayment =
+        normalizedPaymentStatus === "RECEIVED" ||
+        normalizedPaymentStatus === "CONFIRMED";
+
+      if (!providerConfirmedPayment) {
+        if (
+          normalizedPaymentStatus === "EXPIRED" ||
+          normalizedPaymentStatus === "OVERDUE"
+        ) {
+          return {
+            ok: false,
+            error: "Esta cobrança Pix expirou. Gere um novo Pix para continuar.",
+          };
+        }
+
+        if (
+          normalizedPaymentStatus === "PENDING" ||
+          normalizedPaymentStatus === "UNPAID" ||
+          normalizedPaymentStatus === "NO_PAYMENT_REQUIRED"
+        ) {
+          return {
+            ok: true,
+            message:
+              "O Pix ainda não foi compensado no intermediador. Assim que entrar, o app libera o atendimento.",
+          };
+        }
+
+        return {
+          ok: true,
+          message: "Estamos aguardando a confirmação final do Pix para liberar o atendimento.",
+        };
+      }
+
       const remoteAppState = await resolveRemoteAppState(
         state.sessionToken,
         state.activeServiceRequest,
@@ -2313,31 +2491,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return {
           ok: true,
           message: "Pagamento confirmado com sucesso.",
-        };
-      }
-
-      const normalizedPaymentStatus = String(
-        paymentState.status ?? paymentState.paymentStatus ?? ""
-      )
-        .trim()
-        .toUpperCase();
-
-      if (normalizedPaymentStatus === "EXPIRED" || normalizedPaymentStatus === "OVERDUE") {
-        return {
-          ok: false,
-          error: "Esta cobrança Pix expirou. Gere um novo Pix para continuar.",
-        };
-      }
-
-      if (
-        normalizedPaymentStatus === "PENDING" ||
-        normalizedPaymentStatus === "UNPAID" ||
-        normalizedPaymentStatus === "NO_PAYMENT_REQUIRED"
-      ) {
-        return {
-          ok: true,
-          message:
-            "O Pix ainda não foi compensado no intermediador. Assim que entrar, o app libera o atendimento.",
         };
       }
 
@@ -3072,6 +3225,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         releaseServicePayment: withErrorToast(releaseServicePayment),
         listCompletedServiceRequests,
         refreshSessionState: withErrorToast(refreshSessionState),
+        completeAppTour,
         dismissNotification,
         removeNotification,
         markNotificationRead,

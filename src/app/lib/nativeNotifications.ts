@@ -2,7 +2,7 @@ import { LocalNotifications } from "@capacitor/local-notifications";
 import type { AppNotification } from "../types";
 import { isNativeAppRuntime } from "./nativeRuntime";
 
-const CHANNEL_ID = "worqo-general";
+const CHANNEL_ID = "worqo-general-v2";
 const DELIVERED_IDS_STORAGE_KEY = "worqo-native-delivered-notification-ids-v1";
 const MAX_STORED_DELIVERED_IDS = 200;
 const MAX_NATIVE_BODY_LENGTH = 140;
@@ -107,7 +107,7 @@ function parseChatMessage(notification: AppNotification) {
   const preview = message.slice(separatorIndex + 1).trimStart();
 
   return {
-    sender: sender.split(/\s+/)[0] || sender,
+    sender,
     preview,
   };
 }
@@ -175,6 +175,7 @@ export async function requestNativeNotificationPermission() {
       importance: 5,
       visibility: 1,
       vibration: true,
+      sound: "default",
     }).catch(() => undefined);
     return true;
   }
@@ -192,6 +193,7 @@ export async function requestNativeNotificationPermission() {
     importance: 5,
     visibility: 1,
     vibration: true,
+    sound: "default",
   }).catch(() => undefined);
 
   return true;
