@@ -14,12 +14,17 @@ import {
   nowIso,
   verifyPassword,
 } from "./security.mjs";
-import { sendEmailVerification } from "./providers/email-provider.mjs";
+import {
+  sendEmailVerification,
+  sendNewDeviceLoginEmail,
+  sendPasswordResetEmail,
+} from "./providers/email-provider.mjs";
 import { config, isAdminEmail } from "./config.mjs";
 import {
   normalizeEmail,
   normalizePhone,
   validateIdentityBirthDate,
+  validatePassword,
   validateRegistrationInput,
   validateVerificationCode,
 } from "./validators.mjs";
@@ -29,9 +34,25 @@ import { createUserNotification } from "./notifications.mjs";
 const defaultSessionDurationMs = 1000 * 60 * 60 * 24 * 30;
 const rememberedSessionDurationMs = 1000 * 60 * 60 * 24 * 365;
 const verificationCodeDurationMs = 1000 * 60 * 10;
+const securityChallengeDurationMs = 1000 * 60 * 10;
+const securityChallengeMaxAttempts = 5;
+const securityChallengeResendWindowMs = 30_000;
 const oauthStateDurationMs = 1000 * 60 * 10;
 const userActivityTouchWindowMs = 1000 * 60;
-const currentLegalVersion = "2026-03-21";
+const providerVerificationStatuses = new Set([
+  "not_required",
+  "pending_documents",
+  "under_review",
+  "changes_requested",
+  "approved",
+  "rejected",
+]);
+const providerVerificationSubmissionStatuses = new Set([
+  "pending_documents",
+  "changes_requested",
+]);
+const providerVerificationImagePattern = /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=\s]+$/i;
+const providerVerificationImageMaxLength = 3_000_000;
 const countCompletedServicesForUserStatement = db.prepare(
   `
     SELECT COUNT(*) AS total
@@ -134,6 +155,45 @@ function parseStoredList(value) {
   } catch {
     return [];
   }
+}
+
+function resolveProviderVerificationStatus(row, accountKind, isAdmin) {
+  if (isAdmin || accountKind !== "provider") {
+    return "not_required";
+  }
+
+  const status = String(row.provider_verification_status ?? "").trim();
+
+  return providerVerificationStatuses.has(status) && status !== "not_required"
+    ? status
+    : "pending_documents";
+}
+
+function normalizeProviderVerificationImage(value, label) {
+  const normalized = String(value ?? "").trim();
+
+  if (!normalized || !providerVerificationImagePattern.test(normalized)) {
+    throw new HttpError(400, `Envie uma imagem vÃ¡lida para ${label}.`);
+  }
+
+  if (normalized.length > providerVerificationImageMaxLength) {
+    throw new HttpError(400, `${label} ficou muito grande. Envie uma imagem com atÃ© 2 MB.`);
+  }
+
+  return normalized;
+}
+
+function normalizeProviderRgNumber(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9.-]/g, "")
+    .slice(0, 20);
+
+  if (normalized.length < 5) {
+    throw new HttpError(400, "Informe um nÃºmero de RG vÃ¡lido.");
+  }
+
+  return normalized;
 }
 
 function normalizeProfileList(value, fallback, maxItems = 12) {
@@ -247,6 +307,7 @@ function mapUser(row) {
     row.account_kind === "client" || row.account_kind === "provider" ? row.account_kind : null;
   const accountKind =
     storedAccountKind ?? (isAdmin || row.profile_setup_completed_at ? "provider" : null);
+  const providerVerificationStatus = resolveProviderVerificationStatus(row, accountKind, isAdmin);
   const completedServicesCount =
     countCompletedServicesForUserStatement.get(row.id, row.id)?.total ?? 0;
   const reviewMeta = getUserReviewMeta(row.id);
@@ -277,6 +338,14 @@ function mapUser(row) {
     verifiedChannel: row.verified_channel === "email" ? "email" : null,
     emailVerifiedAt: row.email_verified_at ?? null,
     hasCompletedProfileSetup: isAdmin || Boolean(row.profile_setup_completed_at),
+    providerVerificationStatus,
+    providerVerificationSubmittedAt: row.provider_verification_submitted_at ?? null,
+    providerVerificationRequestedReason: row.provider_verification_requested_reason ?? null,
+    providerVerificationDecisionNote: row.provider_verification_decision_note ?? null,
+    providerVerificationDocumentVersion: Number(row.provider_verification_document_version) || 0,
+    providerVerificationHasDocuments: Boolean(
+      row.provider_face_image && row.provider_rg_document_image && row.provider_rg_number
+    ),
     pixKeyType: row.pix_withdrawal_key_type ?? null,
     pixKey: row.pix_withdrawal_key ?? "",
     hasPixKeyConfigured: Boolean(row.pix_withdrawal_key_type && row.pix_withdrawal_key),
@@ -471,6 +540,66 @@ function normalizeDeviceMetadata(options = {}) {
   };
 }
 
+function maskEmail(email) {
+  const [localPart = "", domain = ""] = String(email ?? "").split("@");
+  const visible = localPart.slice(0, Math.min(2, localPart.length));
+  const hiddenLength = Math.max(3, localPart.length - visible.length);
+  return `${visible}${"*".repeat(hiddenLength)}@${domain}`;
+}
+
+function isTrustedLoginDevice(userId, deviceId) {
+  const normalizedDeviceId = normalizeSessionText(deviceId, 160);
+
+  if (!normalizedDeviceId) {
+    return false;
+  }
+
+  return Boolean(
+    db
+      .prepare(
+        `
+          SELECT id
+          FROM trusted_login_devices
+          WHERE user_id = ? AND device_id = ?
+          LIMIT 1
+        `
+      )
+      .get(userId, normalizedDeviceId)
+  );
+}
+
+function trustLoginDevice(userId, device, timestamp = nowIso()) {
+  if (!device.deviceId) {
+    return;
+  }
+
+  db.prepare(
+    `
+      INSERT INTO trusted_login_devices (
+        id,
+        user_id,
+        device_id,
+        device_label,
+        device_platform,
+        first_verified_at,
+        last_verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, device_id) DO UPDATE SET
+        device_label = excluded.device_label,
+        device_platform = excluded.device_platform,
+        last_verified_at = excluded.last_verified_at
+    `
+  ).run(
+    createId(),
+    userId,
+    device.deviceId,
+    device.deviceLabel,
+    device.devicePlatform,
+    timestamp,
+    timestamp
+  );
+}
+
 function formatSecurityLoginDate(timestamp, timezone) {
   try {
     return new Intl.DateTimeFormat("pt-BR", {
@@ -579,7 +708,129 @@ function createSession(userId, { rememberMe = false, ...deviceOptions } = {}) {
     device.loginLocation
   );
 
+  trustLoginDevice(userId, device, timestamp);
+
   return token;
+}
+
+async function createDeviceLoginChallenge(user, { rememberMe = false, ...deviceOptions } = {}) {
+  const device = normalizeDeviceMetadata(deviceOptions);
+  const latestChallenge = db
+    .prepare(
+      `
+        SELECT created_at
+        FROM device_login_challenges
+        WHERE user_id = ? AND consumed_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+    )
+    .get(user.id);
+
+  if (
+    latestChallenge &&
+    Date.now() - new Date(latestChallenge.created_at).getTime() < securityChallengeResendWindowMs
+  ) {
+    throw new HttpError(
+      429,
+      "Um código já foi enviado. Aguarde alguns segundos antes de tentar novamente."
+    );
+  }
+
+  const timestamp = nowIso();
+  const challengeId = createId();
+  const code = createNumericCode();
+  const expiresAt = new Date(Date.now() + securityChallengeDurationMs).toISOString();
+
+  db.prepare(
+    `
+      UPDATE device_login_challenges
+      SET consumed_at = ?
+      WHERE user_id = ? AND consumed_at IS NULL
+    `
+  ).run(timestamp, user.id);
+
+  db.prepare(
+    `
+      INSERT INTO device_login_challenges (
+        id,
+        user_id,
+        code_hash,
+        remember_me,
+        device_id,
+        device_label,
+        device_platform,
+        timezone,
+        login_ip,
+        login_location,
+        expires_at,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    challengeId,
+    user.id,
+    hashCode(code),
+    rememberMe ? 1 : 0,
+    device.deviceId,
+    device.deviceLabel,
+    device.devicePlatform,
+    device.timezone,
+    device.loginIp,
+    device.loginLocation,
+    expiresAt,
+    timestamp
+  );
+
+  let delivery;
+
+  try {
+    delivery = await sendNewDeviceLoginEmail({
+      code,
+      email: user.email,
+      fullName: user.full_name,
+      deviceLabel: device.deviceLabel,
+      loginLocation: device.loginLocation,
+      requestedAt: formatSecurityLoginDate(timestamp, device.timezone),
+    });
+  } catch (error) {
+    db.prepare(
+      "UPDATE device_login_challenges SET consumed_at = ? WHERE id = ?"
+    ).run(nowIso(), challengeId);
+    throw error;
+  }
+
+  return {
+    challengeId,
+    email: user.email,
+    maskedEmail: maskEmail(user.email),
+    deviceLabel: device.deviceLabel,
+    loginLocation: device.loginLocation,
+    expiresAt,
+    debugCode: delivery.provider.startsWith("mock") ? code : null,
+  };
+}
+
+async function prepareAuthenticatedLogin(user, options = {}) {
+  const device = normalizeDeviceMetadata(options);
+  const normalizedUserEmail = normalizeEmail(user.email);
+  const isDeviceVerificationExempt = config.deviceVerificationExemptEmails.includes(
+    normalizedUserEmail
+  );
+
+  if (isDeviceVerificationExempt || isTrustedLoginDevice(user.id, device.deviceId)) {
+    return {
+      token: createSession(user.id, options),
+      user: mapUser(user),
+    };
+  }
+
+  return {
+    token: null,
+    user: null,
+    requiresDeviceVerification: true,
+    pendingDeviceVerification: await createDeviceLoginChallenge(user, options),
+  };
 }
 
 function buildDeletedUserEmail(userId) {
@@ -630,6 +881,24 @@ const deleteUserNotificationsStatement = db.prepare(
 const deleteUserVerificationCodesStatement = db.prepare(
   "DELETE FROM verification_codes WHERE user_id = ?"
 );
+const deleteUserPasswordResetChallengesStatement = db.prepare(
+  "DELETE FROM password_reset_challenges WHERE user_id = ?"
+);
+const deleteUserDeviceLoginChallengesStatement = db.prepare(
+  "DELETE FROM device_login_challenges WHERE user_id = ?"
+);
+const deleteUserTrustedLoginDevicesStatement = db.prepare(
+  "DELETE FROM trusted_login_devices WHERE user_id = ?"
+);
+const blockAccountEmailStatement = db.prepare(
+  `
+    INSERT INTO blocked_account_emails (email, user_id, reason, created_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      user_id = excluded.user_id,
+      reason = excluded.reason
+  `
+);
 const revokeUserSessionsStatement = db.prepare(
   `
     UPDATE sessions
@@ -676,6 +945,16 @@ const anonymizeUserStatement = db.prepare(
       email_verified_at = NULL,
       phone_verified_at = NULL,
       profile_setup_completed_at = NULL,
+      provider_verification_status = 'not_required',
+      provider_verification_submitted_at = NULL,
+      provider_verification_decided_at = NULL,
+      provider_verification_requested_reason = NULL,
+      provider_verification_decision_note = NULL,
+      provider_verification_reviewed_by_user_id = NULL,
+      provider_verification_document_version = 0,
+      provider_rg_number = '',
+      provider_face_image = NULL,
+      provider_rg_document_image = NULL,
       last_active_at = NULL,
       asaas_customer_id = NULL,
       pix_withdrawal_key_type = NULL,
@@ -911,7 +1190,25 @@ function buildAdminPlaceholderPhone(email) {
   return `admin:${normalizeEmail(email).slice(0, 48)}`;
 }
 
+function isAccountEmailBlocked(email) {
+  return Boolean(
+    db
+      .prepare("SELECT email FROM blocked_account_emails WHERE email = ? LIMIT 1")
+      .get(normalizeEmail(email))
+  );
+}
+
+function assertEmailCanCreateAccount(email) {
+  if (isAccountEmailBlocked(email)) {
+    throw new HttpError(
+      403,
+      "Este e-mail pertence a uma conta excluída, banida ou suspensa e não pode criar outra conta Worko."
+    );
+  }
+}
+
 function createGoogleUser(profile) {
+  assertEmailCanCreateAccount(profile.email);
   const timestamp = nowIso();
   const userId = createId();
   const isAdminProfile = isAdminEmail(profile.email);
@@ -1116,7 +1413,7 @@ export async function completeGoogleOAuthLogin({ code, state }) {
     };
   }
 
-  const token = createSession(user.id, {
+  const session = await prepareAuthenticatedLogin(user, {
     rememberMe,
     deviceId,
     deviceLabel,
@@ -1127,8 +1424,7 @@ export async function completeGoogleOAuthLogin({ code, state }) {
   });
 
   return {
-    token,
-    user: mapUser(user),
+    ...session,
     rememberMe,
     returnTo,
   };
@@ -1139,6 +1435,7 @@ export async function registerUser(payload) {
   const isAdminRegistration = isAdminEmail(email);
 
   validateRegistrationInput(payload, { requireIdentity: !isAdminRegistration });
+  assertEmailCanCreateAccount(email);
 
   const phone = isAdminRegistration
     ? buildAdminPlaceholderPhone(email)
@@ -1361,7 +1658,7 @@ export function verifyAccount({
   });
 }
 
-export function loginUser({
+export async function loginUser({
   email,
   password,
   rememberMe,
@@ -1405,7 +1702,7 @@ export function loginUser({
     });
   }
 
-  const token = createSession(user.id, {
+  return prepareAuthenticatedLogin(user, {
     rememberMe: Boolean(rememberMe),
     deviceId,
     deviceLabel,
@@ -1414,9 +1711,245 @@ export function loginUser({
     loginIp,
     loginLocation,
   });
+}
+
+export async function requestPasswordReset({ email }) {
+  const startedAt = Date.now();
+  const normalizedEmail = normalizeEmail(email ?? "");
+  const genericResponse = {
+    ok: true,
+    message:
+      "Se existir uma conta ativa com este e-mail, enviaremos um código de recuperação válido por 10 minutos.",
+  };
+  const finishRequest = async (response) => {
+    const remainingDelay = Math.max(0, 650 - (Date.now() - startedAt));
+
+    if (remainingDelay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+    }
+
+    return response;
+  };
+  const user = getUserByEmail(normalizedEmail);
+
+  if (!user || user.deleted_at || user.suspended_at || !user.verified_channel) {
+    return finishRequest(genericResponse);
+  }
+
+  const latestChallenge = db
+    .prepare(
+      `
+        SELECT created_at
+        FROM password_reset_challenges
+        WHERE user_id = ? AND consumed_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+    )
+    .get(user.id);
+
+  if (
+    latestChallenge &&
+    Date.now() - new Date(latestChallenge.created_at).getTime() < securityChallengeResendWindowMs
+  ) {
+    return finishRequest(genericResponse);
+  }
+
+  const timestamp = nowIso();
+  const challengeId = createId();
+  const code = createNumericCode();
+  const expiresAt = new Date(Date.now() + securityChallengeDurationMs).toISOString();
+
+  db.prepare(
+    `
+      UPDATE password_reset_challenges
+      SET consumed_at = ?
+      WHERE user_id = ? AND consumed_at IS NULL
+    `
+  ).run(timestamp, user.id);
+  db.prepare(
+    `
+      INSERT INTO password_reset_challenges (
+        id, user_id, code_hash, expires_at, created_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `
+  ).run(challengeId, user.id, hashCode(code), expiresAt, timestamp);
+
+  try {
+    const delivery = await sendPasswordResetEmail({
+      code,
+      email: user.email,
+      fullName: user.full_name,
+    });
+
+    return finishRequest({
+      ...genericResponse,
+      debugCode: delivery.provider.startsWith("mock") ? code : null,
+    });
+  } catch (error) {
+    db.prepare(
+      "UPDATE password_reset_challenges SET consumed_at = ? WHERE id = ?"
+    ).run(nowIso(), challengeId);
+    console.error("Password reset email delivery failed.", {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return finishRequest(genericResponse);
+  }
+}
+
+export function resetPassword({ email, code, newPassword }) {
+  const normalizedEmail = normalizeEmail(email ?? "");
+  const password = validatePassword(String(newPassword ?? "").trim());
+  validateVerificationCode(code);
+  const user = getUserByEmail(normalizedEmail);
+  const invalidCodeError = () =>
+    new HttpError(400, "Código inválido ou expirado. Solicite um novo código.");
+
+  if (!user || user.deleted_at || user.suspended_at) {
+    throw invalidCodeError();
+  }
+
+  const challenge = db
+    .prepare(
+      `
+        SELECT *
+        FROM password_reset_challenges
+        WHERE user_id = ? AND consumed_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+    )
+    .get(user.id);
+
+  if (
+    !challenge ||
+    new Date(challenge.expires_at).getTime() < Date.now() ||
+    Number(challenge.failed_attempts) >= securityChallengeMaxAttempts
+  ) {
+    throw invalidCodeError();
+  }
+
+  if (challenge.code_hash !== hashCode(code)) {
+    db.prepare(
+      `
+        UPDATE password_reset_challenges
+        SET failed_attempts = failed_attempts + 1
+        WHERE id = ?
+      `
+    ).run(challenge.id);
+    throw invalidCodeError();
+  }
+
+  const timestamp = nowIso();
+  db.exec("BEGIN IMMEDIATE");
+
+  try {
+    db.prepare(
+      "UPDATE password_reset_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL"
+    ).run(timestamp, challenge.id);
+    db.prepare(
+      "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?"
+    ).run(createPasswordHash(password), timestamp, user.id);
+    db.prepare(
+      `
+        UPDATE sessions
+        SET revoked_at = ?, revoked_reason = 'password-reset'
+        WHERE user_id = ? AND revoked_at IS NULL
+      `
+    ).run(timestamp, user.id);
+    db.prepare(
+      `
+        UPDATE device_login_challenges
+        SET consumed_at = ?
+        WHERE user_id = ? AND consumed_at IS NULL
+      `
+    ).run(timestamp, user.id);
+    db.prepare("DELETE FROM trusted_login_devices WHERE user_id = ?").run(user.id);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    ok: true,
+    message: "Senha redefinida. Entre novamente usando sua nova senha.",
+  };
+}
+
+export function verifyDeviceLogin({ challengeId, code }) {
+  validateVerificationCode(code);
+  const challenge = db
+    .prepare(
+      `
+        SELECT *
+        FROM device_login_challenges
+        WHERE id = ? AND consumed_at IS NULL
+        LIMIT 1
+      `
+    )
+    .get(String(challengeId ?? "").trim());
+  const invalidCodeError = () =>
+    new HttpError(400, "Código inválido ou expirado. Faça o login novamente.");
+
+  if (
+    !challenge ||
+    new Date(challenge.expires_at).getTime() < Date.now() ||
+    Number(challenge.failed_attempts) >= securityChallengeMaxAttempts
+  ) {
+    throw invalidCodeError();
+  }
+
+  if (challenge.code_hash !== hashCode(code)) {
+    db.prepare(
+      `
+        UPDATE device_login_challenges
+        SET failed_attempts = failed_attempts + 1
+        WHERE id = ?
+      `
+    ).run(challenge.id);
+    throw invalidCodeError();
+  }
+
+  const user = getUserById(challenge.user_id);
+
+  if (!user) {
+    throw invalidCodeError();
+  }
+
+  assertUserIsActive(user);
+
+  if (user.suspended_at) {
+    throw new HttpError(403, "Esta conta está suspensa.");
+  }
+
+  const timestamp = nowIso();
+  const consumed = db.prepare(
+    `
+      UPDATE device_login_challenges
+      SET consumed_at = ?
+      WHERE id = ? AND consumed_at IS NULL
+    `
+  ).run(timestamp, challenge.id);
+
+  if (Number(consumed.changes) !== 1) {
+    throw invalidCodeError();
+  }
+
+  const token = createSession(user.id, {
+    rememberMe: Boolean(challenge.remember_me),
+    deviceId: challenge.device_id,
+    deviceLabel: challenge.device_label,
+    devicePlatform: challenge.device_platform,
+    timezone: challenge.timezone,
+    loginIp: challenge.login_ip,
+    loginLocation: challenge.login_location,
+  });
+
   return {
     token,
-    user: mapUser(user),
+    user: mapUser(getUserById(user.id)),
   };
 }
 
@@ -1567,6 +2100,12 @@ export function deleteUserAccount(userId) {
   db.exec("BEGIN IMMEDIATE");
 
   try {
+    blockAccountEmailStatement.run(
+      normalizeEmail(user.email),
+      userId,
+      "user-deleted",
+      timestamp
+    );
     anonymizeServiceChatMessagesStatement.run(userId);
     anonymizeCommunityChatMessagesStatement.run(userId);
     deleteCommunityContactChatMessagesStatement.run(userId);
@@ -1576,6 +2115,9 @@ export function deleteUserAccount(userId) {
     deleteUserPushDevicesStatement.run(userId);
     deleteUserNotificationsStatement.run(userId);
     deleteUserVerificationCodesStatement.run(userId);
+    deleteUserPasswordResetChallengesStatement.run(userId);
+    deleteUserDeviceLoginChallengesStatement.run(userId);
+    deleteUserTrustedLoginDevicesStatement.run(userId);
     revokeUserSessionsStatement.run(timestamp, userId);
     clearServiceRequestEventsActorStatement.run(userId);
     deleteWorkerBlocksStatement.run(userId, userId);
@@ -1647,6 +2189,22 @@ export function updateUserProfile(userId, updates) {
     }
 
     nextAccountKind = requestedAccountKind;
+  }
+
+  const currentProviderVerificationStatus = resolveProviderVerificationStatus(
+    user,
+    currentAccountKind,
+    isAdminEmail(user.email)
+  );
+  let nextProviderVerificationStatus = currentProviderVerificationStatus;
+
+  if (nextAccountKind !== "provider" || isAdminEmail(user.email)) {
+    nextProviderVerificationStatus = "not_required";
+  } else if (
+    currentProviderVerificationStatus === "not_required" ||
+    !String(user.provider_verification_status ?? "").trim()
+  ) {
+    nextProviderVerificationStatus = "pending_documents";
   }
 
   const nextCpfDigits = normalizeCpf(updates.cpf ?? user.cpf ?? "");
@@ -1790,6 +2348,7 @@ export function updateUserProfile(userId, updates) {
         certificates_json = ?,
         identity_locked_at = ?,
         profile_setup_completed_at = ?,
+        provider_verification_status = ?,
         updated_at = ?
       WHERE id = ?
     `
@@ -1816,7 +2375,103 @@ export function updateUserProfile(userId, updates) {
     nextCertificatés,
     nextIdentityLockedAt,
     profileCompletedAt,
+    nextProviderVerificationStatus,
     nowIso(),
+    userId
+  );
+
+  return mapUser(getUserById(userId));
+}
+
+export function submitProviderVerification(userId, payload) {
+  const user = getUserById(userId);
+
+  if (!user) {
+    throw new HttpError(404, "UsuÃ¡rio(a) nÃ£o encontrado(a).");
+  }
+
+  assertUserIsActive(user);
+
+  if (isAdminEmail(user.email) || normalizeAccountKind(user.account_kind) !== "provider") {
+    throw new HttpError(403, "Somente contas de prestador(a) podem enviar documentos.");
+  }
+
+  if (!user.profile_setup_completed_at) {
+    throw new HttpError(409, "Conclua seu perfil antes de enviar os documentos.");
+  }
+
+  const currentStatus = resolveProviderVerificationStatus(user, "provider", false);
+
+  if (!providerVerificationSubmissionStatuses.has(currentStatus)) {
+    if (currentStatus === "under_review") {
+      throw new HttpError(409, "Seus documentos jÃ¡ estÃ£o em anÃ¡lise.");
+    }
+
+    if (currentStatus === "approved") {
+      throw new HttpError(409, "Seu cadastro de prestador(a) jÃ¡ foi aprovado.");
+    }
+
+    throw new HttpError(403, "Seu cadastro foi recusado e nÃ£o pode reenviar documentos pelo app.");
+  }
+
+  const cpfDigits = normalizeCpf(payload?.cpf ?? user.cpf ?? "");
+
+  if (!isValidCpf(cpfDigits)) {
+    throw new HttpError(400, "Informe um CPF vÃ¡lido para a anÃ¡lise.");
+  }
+
+  const existingCpfOwner = getUserByCpfDigits(cpfDigits);
+
+  if (existingCpfOwner && existingCpfOwner.id !== userId) {
+    throw new HttpError(409, "Este CPF jÃ¡ estÃ¡ vinculado a outra conta.");
+  }
+
+  const cpfChanged = cpfDigits !== String(user.cpf_digits ?? "");
+
+  if (user.cpf_verified_at && cpfChanged) {
+    throw new HttpError(409, "O CPF validado nÃ£o pode ser alterado pelo aplicativo.");
+  }
+
+  const faceImage = normalizeProviderVerificationImage(payload?.faceImage, "a foto do rosto");
+  const rgDocumentImage = normalizeProviderVerificationImage(payload?.rgDocumentImage, "a foto do RG");
+  const rgNumber = normalizeProviderRgNumber(payload?.rgNumber);
+  const timestamp = nowIso();
+
+  db.prepare(
+    `
+      UPDATE users
+      SET
+        cpf = ?,
+        cpf_digits = ?,
+        cpf_verified_at = ?,
+        cpf_verified_name = ?,
+        cpf_verification_provider = ?,
+        cpf_verification_checked_at = ?,
+        provider_verification_status = 'under_review',
+        provider_verification_submitted_at = ?,
+        provider_verification_decided_at = NULL,
+        provider_verification_requested_reason = NULL,
+        provider_verification_decision_note = NULL,
+        provider_verification_reviewed_by_user_id = NULL,
+        provider_verification_document_version = COALESCE(provider_verification_document_version, 0) + 1,
+        provider_rg_number = ?,
+        provider_face_image = ?,
+        provider_rg_document_image = ?,
+        updated_at = ?
+      WHERE id = ?
+    `
+  ).run(
+    formatCpf(cpfDigits),
+    cpfDigits,
+    cpfChanged ? null : user.cpf_verified_at,
+    cpfChanged ? null : user.cpf_verified_name,
+    cpfChanged ? null : user.cpf_verification_provider,
+    cpfChanged ? null : user.cpf_verification_checked_at,
+    timestamp,
+    rgNumber,
+    faceImage,
+    rgDocumentImage,
+    timestamp,
     userId
   );
 

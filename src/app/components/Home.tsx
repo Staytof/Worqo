@@ -4,10 +4,15 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   BellRing,
   Briefcase,
+  CalendarDays,
   ChevronDown,
+  CircleDollarSign,
+  ClipboardList,
+  Clock3,
   LocateFixed,
   MapPin,
   Megaphone,
+  MessageCircleMore,
   Maximize2,
   Minimize2,
   RefreshCw,
@@ -2495,6 +2500,8 @@ function ProviderHome() {
     markWorkerArrived,
     openChat,
     openServiceDispute,
+    reportProviderNoShow,
+    respondProviderNoShow,
     refreshSessionState,
     refreshServicePins,
     releaseServicePayment,
@@ -2564,6 +2571,7 @@ function ProviderHome() {
   const [isMarkingWorkerArrived, setIsMarkingWorkerArrived] = useState(false);
   const [isActiveRequestSheetOpen, setIsActiveRequestSheetOpen] = useState(false);
   const [isRoutePickerOpen, setIsRoutePickerOpen] = useState(false);
+  const [isCurrentServiceInfoOpen, setIsCurrentServiceInfoOpen] = useState(false);
   const [activeRequestSheetError, setActiveRequestSheetError] = useState("");
   const [pendingClientReviewRequest, setPendingClientReviewRequest] =
     useState<ActiveServiceRequest | null>(null);
@@ -2862,6 +2870,9 @@ function ProviderHome() {
     activeServiceRequest.exactLocationVisible &&
     Number.isFinite(Number(activeServiceRequest.latitude)) &&
     Number.isFinite(Number(activeServiceRequest.longitude));
+  const canViewCurrentServiceInfo =
+    activeServiceRequest?.currentUserRole === "worker" &&
+    activeServiceRequest.status === "confirmed";
   const hasOverlayCardOpen = Boolean(
       selectedPin ||
       isRequestComposerOpen ||
@@ -2870,7 +2881,8 @@ function ProviderHome() {
       isWorkerProfileOpen ||
       profilePreview ||
       isActiveRequestSheetOpen ||
-      isRoutePickerOpen
+      isRoutePickerOpen ||
+      isCurrentServiceInfoOpen
   );
   const interestPromptKey =
     activeServiceRequest?.status === "interest-received" &&
@@ -4276,6 +4288,38 @@ function ProviderHome() {
     return result;
   };
 
+  const handleReportNoShowFromSheet = async (payload: {
+    reason: string;
+    evidenceImage?: string | null;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    const result = await reportProviderNoShow(payload);
+
+    if (!result.ok) {
+      setActiveRequestSheetError(
+        result.error ?? "Não conseguimos solicitar o ressarcimento agora."
+      );
+      return result;
+    }
+
+    setActiveRequestSheetError("");
+    return result;
+  };
+
+  const handleRespondNoShowFromSheet = async (payload: {
+    response: string;
+    acknowledgesNoShow: boolean;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    const result = await respondProviderNoShow(payload);
+
+    if (!result.ok) {
+      setActiveRequestSheetError(result.error ?? "Não conseguimos registrar sua resposta agora.");
+      return result;
+    }
+
+    setActiveRequestSheetError("");
+    return result;
+  };
+
   const handleRecenter = () => {
     if (locationState.status !== "ready" || !mapRef.current) {
       return;
@@ -4601,16 +4645,28 @@ function ProviderHome() {
         )}
       </AnimatePresence>
 
-      {!hasOverlayCardOpen && canOpenExternalRoute && (
-        <button
-          type="button"
-          onClick={() => setIsRoutePickerOpen(true)}
-          className="absolute bottom-28 left-1/2 z-40 inline-flex h-14 -translate-x-1/2 items-center justify-center gap-2.5 rounded-full border border-blue-600 bg-blue-600 px-6 text-sm font-black text-white transition active:scale-[0.98]"
-          aria-label="Ver rota em aplicativo externo"
-        >
-          <MapPin className="h-5 w-5" />
-          Ver rota
-        </button>
+      {!hasOverlayCardOpen && canViewCurrentServiceInfo && (
+        <div className="absolute bottom-28 left-4 right-20 z-40 grid max-w-sm grid-cols-2 gap-2 sm:left-1/2 sm:right-auto sm:w-full sm:-translate-x-1/2">
+          <button
+            type="button"
+            onClick={() => setIsCurrentServiceInfoOpen(true)}
+            className="inline-flex h-14 min-w-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 shadow-[0_14px_34px_rgba(15,23,42,0.18)] transition active:scale-[0.98]"
+            aria-label="Ver informações do atendimento atual"
+          >
+            <ClipboardList className="h-5 w-5 shrink-0 text-blue-600" />
+            <span className="truncate">Atendimento</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsRoutePickerOpen(true)}
+            disabled={!canOpenExternalRoute}
+            className="inline-flex h-14 min-w-0 items-center justify-center gap-2 rounded-full border border-blue-600 bg-blue-600 px-3 text-sm font-black text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+            aria-label="Ver rota em aplicativo externo"
+          >
+            <MapPin className="h-5 w-5 shrink-0" />
+            <span className="truncate">Ver rota</span>
+          </button>
+        </div>
       )}
 
       <AnimatePresence>
@@ -4674,6 +4730,155 @@ function ProviderHome() {
                 >
                   <MapPin className="h-4 w-4" />
                   Abrir no Waze
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isCurrentServiceInfoOpen && canViewCurrentServiceInfo && activeServiceRequest ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsCurrentServiceInfoOpen(false)}
+            className="absolute inset-0 z-[83] flex items-end justify-center bg-slate-950/45 px-4 pb-[calc(6.5rem+env(safe-area-inset-bottom,0px))] backdrop-blur-[2px]"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 18 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(event) => event.stopPropagation()}
+              className="max-h-[calc(100dvh-8rem)] w-full max-w-md overflow-y-auto rounded-[28px] bg-white p-5 text-neutral-950 custom-scrollbar"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-blue-600">
+                    Atendimento atual
+                  </p>
+                  <h2 className="mt-1 break-words text-xl font-black text-slate-950">
+                    {activeServiceRequest.details?.title || activeServiceRequest.type}
+                  </h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Cliente: {activeServiceRequest.requesterName}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCurrentServiceInfoOpen(false)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition active:bg-slate-200"
+                  aria-label="Fechar informações do atendimento"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
+                  Solicitação do cliente
+                </p>
+                <p className="mt-2 text-sm font-semibold leading-relaxed text-slate-800">
+                  {activeServiceRequest.description}
+                </p>
+              </div>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 p-3.5">
+                  <CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Data</p>
+                    <p className="mt-1 text-sm font-black text-slate-900">
+                      {activeServiceRequest.details?.serviceDate
+                        ? new Intl.DateTimeFormat("pt-BR", {
+                            day: "2-digit",
+                            month: "long",
+                            year: "numeric",
+                          }).format(
+                            new Date(`${activeServiceRequest.details.serviceDate}T12:00:00`)
+                          )
+                        : "Conforme combinado"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 p-3.5">
+                  <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Horário</p>
+                    <p className="mt-1 text-sm font-black text-slate-900">
+                      {activeServiceRequest.details?.schedule || "Conforme combinado"}
+                    </p>
+                    {activeServiceRequest.details ? (
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Tolerância: {activeServiceRequest.details.delayToleranceMinutes} min
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 p-3.5 sm:col-span-2">
+                  <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Local</p>
+                    <p className="mt-1 break-words text-sm font-black leading-relaxed text-slate-900">
+                      {getActiveRequestDestinationLabel()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 p-3.5 sm:col-span-2">
+                  <CircleDollarSign className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Valor do serviço</p>
+                    <p className="mt-1 text-sm font-black text-slate-900">
+                      {activeServiceRequest.details?.price || "Conforme combinado"}
+                    </p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+                      Este valor não inclui cobrança de deslocamento ao cliente.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-start gap-3">
+                  <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+                  <div>
+                    <p className="text-sm font-black text-amber-950">Responsabilidades do prestador</p>
+                    <ul className="mt-2 grid gap-1.5 text-xs font-semibold leading-relaxed text-amber-900">
+                      <li>• Levar todas as ferramentas necessárias para executar o trabalho.</li>
+                      <li>• Organizar e custear o próprio trajeto até o cliente.</li>
+                      <li>• Nunca cobrar do cliente combustível, transporte ou qualquer custo de deslocamento.</li>
+                      <li>• Respeitar data, horário, tolerância e escopo combinados.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCurrentServiceInfoOpen(false);
+                    if (activeServiceRequest.chatId) openChat(activeServiceRequest.chatId);
+                    navigate("/app/chat");
+                  }}
+                  className="flex h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-800 transition active:bg-slate-50"
+                >
+                  <MessageCircleMore className="h-4 w-4" />
+                  Abrir chat
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCurrentServiceInfoOpen(false);
+                    setIsRoutePickerOpen(true);
+                  }}
+                  disabled={!canOpenExternalRoute}
+                  className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-3 text-sm font-black text-white transition active:scale-[0.98] disabled:bg-slate-300"
+                >
+                  <MapPin className="h-4 w-4" />
+                  Ver rota
                 </button>
               </div>
             </motion.div>
@@ -5686,6 +5891,8 @@ function ProviderHome() {
         onMarkWorkerArrived={handleMarkWorkerArrivedFromSheet}
         onReleasePayment={handleReleasePaymentFromSheet}
         onOpenDispute={handleOpenDisputeFromSheet}
+        onReportNoShow={handleReportNoShowFromSheet}
+        onRespondNoShow={handleRespondNoShowFromSheet}
       />
 
       <PublicProfileModal

@@ -1,7 +1,7 @@
 ﻿import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { config } from "./config.mjs";
+import { config, isAdminEmail } from "./config.mjs";
 import { normalizeCpf } from "./cpf-utils.mjs";
 
 fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
@@ -41,6 +41,16 @@ db.exec(`
     email_verified_at TEXT,
     phone_verified_at TEXT,
     profile_setup_completed_at TEXT,
+    provider_verification_status TEXT NOT NULL DEFAULT 'not_required',
+    provider_verification_submitted_at TEXT,
+    provider_verification_decided_at TEXT,
+    provider_verification_requested_reason TEXT,
+    provider_verification_decision_note TEXT,
+    provider_verification_reviewed_by_user_id TEXT,
+    provider_verification_document_version INTEGER NOT NULL DEFAULT 0,
+    provider_rg_number TEXT NOT NULL DEFAULT '',
+    provider_face_image TEXT,
+    provider_rg_document_image TEXT,
     deleted_at TEXT,
     deletion_requested_at TEXT,
     created_at TEXT NOT NULL,
@@ -56,6 +66,54 @@ db.exec(`
     expires_at TEXT NOT NULL,
     consumed_at TEXT,
     created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+  );
+
+  CREATE TABLE IF NOT EXISTS password_reset_challenges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+  );
+
+  CREATE TABLE IF NOT EXISTS device_login_challenges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    remember_me INTEGER NOT NULL DEFAULT 1,
+    device_id TEXT NOT NULL,
+    device_label TEXT NOT NULL,
+    device_platform TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    login_ip TEXT NOT NULL,
+    login_location TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+  );
+
+  CREATE TABLE IF NOT EXISTS blocked_account_emails (
+    email TEXT PRIMARY KEY,
+    user_id TEXT,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS trusted_login_devices (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    device_label TEXT NOT NULL,
+    device_platform TEXT NOT NULL,
+    first_verified_at TEXT NOT NULL,
+    last_verified_at TEXT NOT NULL,
+    UNIQUE (user_id, device_id),
     FOREIGN KEY (user_id) REFERENCES users (id)
   );
 
@@ -102,6 +160,8 @@ db.exec(`
     worker_user_id TEXT NOT NULL,
     requester_last_seen_at TEXT,
     worker_last_seen_at TEXT,
+    locked_at TEXT,
+    reopened_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (service_request_id) REFERENCES service_requests (id) ON DELETE CASCADE,
@@ -554,6 +614,16 @@ ensureUserColumn("account_kind", "TEXT");
 ensureUserColumn("deleted_at", "TEXT");
 ensureUserColumn("deletion_requested_at", "TEXT");
 ensureUserColumn("app_tour_completed_at", "TEXT");
+ensureUserColumn("provider_verification_status", "TEXT NOT NULL DEFAULT 'not_required'");
+ensureUserColumn("provider_verification_submitted_at", "TEXT");
+ensureUserColumn("provider_verification_decided_at", "TEXT");
+ensureUserColumn("provider_verification_requested_reason", "TEXT");
+ensureUserColumn("provider_verification_decision_note", "TEXT");
+ensureUserColumn("provider_verification_reviewed_by_user_id", "TEXT");
+ensureUserColumn("provider_verification_document_version", "INTEGER NOT NULL DEFAULT 0");
+ensureUserColumn("provider_rg_number", "TEXT NOT NULL DEFAULT ''");
+ensureUserColumn("provider_face_image", "TEXT");
+ensureUserColumn("provider_rg_document_image", "TEXT");
 ensureOauthLoginStateColumn("return_to", "TEXT");
 ensureOauthLoginStateColumn("device_id", "TEXT");
 ensureOauthLoginStateColumn("device_label", "TEXT");
@@ -570,6 +640,33 @@ ensureTableColumn("sessions", "revoked_reason", "TEXT");
 ensureTableColumn("sessions", "replaced_device_label", "TEXT");
 ensureTableColumn("sessions", "replaced_login_location", "TEXT");
 ensureTableColumn("sessions", "replaced_at", "TEXT");
+
+const legacyProviderRows = db
+  .prepare(
+    `
+      SELECT id, email, account_kind, provider_verification_status
+      FROM users
+      WHERE account_kind = 'provider'
+    `
+  )
+  .all();
+const markLegacyProviderVerificationPending = db.prepare(
+  `
+    UPDATE users
+    SET provider_verification_status = 'pending_documents',
+        updated_at = ?
+    WHERE id = ?
+  `
+);
+
+for (const provider of legacyProviderRows) {
+  const currentStatus = String(provider.provider_verification_status ?? "").trim();
+
+  if (!isAdminEmail(provider.email) && (!currentStatus || currentStatus === "not_required")) {
+    markLegacyProviderVerificationPending.run(new Date().toISOString(), provider.id);
+  }
+}
+
 ensureServiceRequestColumn("worker_user_id", "TEXT");
 ensureServiceRequestColumn("accepted_at", "TEXT");
 ensureServiceRequestColumn("service_details_json", "TEXT");
@@ -595,9 +692,17 @@ ensureServiceRequestColumn("disputed_at", "TEXT");
 ensureServiceRequestColumn("dispute_resolution", "TEXT");
 ensureServiceRequestColumn("dispute_resolved_at", "TEXT");
 ensureServiceRequestColumn("dispute_admin_note", "TEXT");
+ensureServiceRequestColumn("dispute_kind", "TEXT");
+ensureServiceRequestColumn("dispute_evidence_image", "TEXT");
+ensureServiceRequestColumn("dispute_provider_response", "TEXT");
+ensureServiceRequestColumn("dispute_provider_responded_at", "TEXT");
+ensureServiceRequestColumn("dispute_provider_acknowledged_no_show", "INTEGER NOT NULL DEFAULT 0");
+ensureServiceRequestColumn("dispute_response_due_at", "TEXT");
+ensureServiceRequestColumn("dispute_auto_refund_started_at", "TEXT");
 ensureServiceRequestColumn("refund_status", "TEXT");
 ensureServiceRequestColumn("refund_amount_cents", "INTEGER");
 ensureServiceRequestColumn("refunded_at", "TEXT");
+ensureServiceRequestColumn("wallet_available_at", "TEXT");
 ensureCommunityPostColumn("profession", "TEXT");
 ensureCommunityPostColumn("experience", "TEXT");
 ensureCommunityPostColumn("duration_days", "INTEGER");
@@ -606,6 +711,8 @@ ensureCommunityPostColumn("latitude", "REAL");
 ensureCommunityPostColumn("longitude", "REAL");
 ensureServiceChatColumn("requester_archived_at", "TEXT");
 ensureServiceChatColumn("worker_archived_at", "TEXT");
+ensureServiceChatColumn("locked_at", "TEXT");
+ensureServiceChatColumn("reopened_at", "TEXT");
 ensureCommunityPostChatColumn("post_author_archived_at", "TEXT");
 ensureCommunityPostChatColumn("contact_archived_at", "TEXT");
 ensureTableColumn("service_chat_messages", "message_type", "TEXT NOT NULL DEFAULT 'text'");
@@ -620,6 +727,40 @@ ensureWorkerWithdrawalColumn("gross_amount_cents", "INTEGER NOT NULL DEFAULT 0")
 ensureWorkerWithdrawalColumn("fee_amount_cents", "INTEGER NOT NULL DEFAULT 0");
 
 ensureDirectionalServiceReviews();
+
+db.exec(`
+  UPDATE service_requests
+  SET wallet_available_at = COALESCE(
+    (
+      SELECT MIN(service_request_events.created_at)
+      FROM service_request_events
+      WHERE service_request_events.service_request_id = service_requests.id
+        AND service_request_events.event_kind = 'service-completed'
+    ),
+    service_requests.updated_at,
+    service_requests.created_at
+  )
+  WHERE service_requests.status = 'completed'
+    AND service_requests.wallet_available_at IS NULL;
+
+  UPDATE service_chats
+  SET locked_at = COALESCE(
+    (
+      SELECT MIN(service_request_events.created_at)
+      FROM service_request_events
+      WHERE service_request_events.service_request_id = service_chats.service_request_id
+        AND service_request_events.event_kind = 'service-completed'
+    ),
+    service_chats.updated_at
+  )
+  WHERE service_chats.locked_at IS NULL
+    AND EXISTS (
+      SELECT 1
+      FROM service_requests
+      WHERE service_requests.id = service_chats.service_request_id
+        AND service_requests.status = 'completed'
+    );
+`);
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS service_requests_origin_community_chat_idx
@@ -671,6 +812,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS users_asaas_customer_idx
   ON users (asaas_customer_id);
 
+  CREATE INDEX IF NOT EXISTS users_provider_verification_idx
+  ON users (provider_verification_status, provider_verification_submitted_at DESC);
+
+  CREATE INDEX IF NOT EXISTS password_reset_challenges_user_created_idx
+  ON password_reset_challenges (user_id, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS device_login_challenges_user_created_idx
+  ON device_login_challenges (user_id, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS trusted_login_devices_user_verified_idx
+  ON trusted_login_devices (user_id, last_verified_at DESC);
+
   CREATE UNIQUE INDEX IF NOT EXISTS users_google_subject_idx
   ON users (google_subject)
   WHERE google_subject IS NOT NULL AND google_subject <> '';
@@ -715,6 +868,41 @@ const clientErrorRetentionCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 100
 
 db.prepare(
   `
+    INSERT OR IGNORE INTO trusted_login_devices (
+      id,
+      user_id,
+      device_id,
+      device_label,
+      device_platform,
+      first_verified_at,
+      last_verified_at
+    )
+    SELECT
+      'trusted-' || id,
+      user_id,
+      device_id,
+      COALESCE(NULLIF(device_label, ''), 'Aparelho conhecido'),
+      COALESCE(NULLIF(device_platform, ''), 'unknown'),
+      created_at,
+      created_at
+    FROM sessions
+    WHERE COALESCE(device_id, '') <> ''
+  `
+).run();
+
+db.prepare(
+  `
+    INSERT OR IGNORE INTO blocked_account_emails (email, user_id, reason, created_at)
+    SELECT LOWER(TRIM(email)), id, 'suspended', COALESCE(suspended_at, created_at, ?)
+    FROM users
+    WHERE suspended_at IS NOT NULL
+      AND deleted_at IS NULL
+      AND email NOT LIKE 'deleted-%@deleted.worqo.invalid'
+  `
+).run(nowTimestamp);
+
+db.prepare(
+  `
     UPDATE users
     SET identity_locked_at = COALESCE(identity_locked_at, created_at, ?)
     WHERE identity_locked_at IS NULL
@@ -726,6 +914,22 @@ db.prepare(
 db.prepare(
   `
     DELETE FROM verification_codes
+    WHERE consumed_at IS NOT NULL
+       OR expires_at < ?
+  `
+).run(nowTimestamp);
+
+db.prepare(
+  `
+    DELETE FROM password_reset_challenges
+    WHERE consumed_at IS NOT NULL
+       OR expires_at < ?
+  `
+).run(nowTimestamp);
+
+db.prepare(
+  `
+    DELETE FROM device_login_challenges
     WHERE consumed_at IS NOT NULL
        OR expires_at < ?
   `

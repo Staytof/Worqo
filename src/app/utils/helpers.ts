@@ -248,7 +248,8 @@ export function formatCurrencyAmount(value: number) {
 }
 
 export const SERVICE_APP_FEE_RATE = 0.1;
-export const ASAAS_FIXED_FEE_AMOUNT = 1.99;
+export const MINIMUM_SERVICE_AMOUNT = 50;
+export const ASAAS_FIXED_FEE_AMOUNT = 2.99;
 export const INSTANT_WITHDRAWAL_FEE_AMOUNT = 1.99;
 
 export function calculateAppServiceFeeAmount(baseAmount: number, rate = SERVICE_APP_FEE_RATE) {

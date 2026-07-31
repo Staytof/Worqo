@@ -67,6 +67,16 @@ export function normalizePhone(value) {
   throw new HttpError(400, "Telefone inválido. Informe um número real com DDD.");
 }
 
+export function validatePassword(value) {
+  const password = String(value ?? "");
+
+  if (password.length < 6) {
+    throw new HttpError(400, "A senha deve ter pelo menos 6 caracteres.");
+  }
+
+  return password;
+}
+
 export function validateRegistrationInput(payload, options = {}) {
   const requireIdentity = options.requireIdentity !== false;
 
@@ -101,9 +111,7 @@ export function validateRegistrationInput(payload, options = {}) {
     ensureAdultBirthDate(payload.birthDate);
   }
 
-  if (!payload.password || payload.password.length < 6) {
-    throw new HttpError(400, "A senha deve ter pelo menos 6 caracteres.");
-  }
+  validatePassword(payload.password);
 }
 
 export function validateVerificationCode(code) {

@@ -1,10 +1,25 @@
-export type OnboardingStep = "login" | "verify" | "profile-setup" | "app";
+export type OnboardingStep =
+  | "login"
+  | "verify"
+  | "device-verify"
+  | "profile-setup"
+  | "provider-verification"
+  | "provider-review"
+  | "app";
 
 export type VerificationMethod = "email";
 
 export type ThemePreference = "light";
 
 export type AccountKind = "client" | "provider";
+
+export type ProviderVerificationStatus =
+  | "not_required"
+  | "pending_documents"
+  | "under_review"
+  | "changes_requested"
+  | "approved"
+  | "rejected";
 
 export type PinType = "Conserto" | "Limpeza" | "Freelas";
 
@@ -42,6 +57,16 @@ export type PendingVerification = {
   email: string;
   phone: string;
   birthDate: string;
+};
+
+export type PendingDeviceVerification = {
+  challengeId: string;
+  email: string;
+  maskedEmail: string;
+  deviceLabel: string;
+  loginLocation: string;
+  expiresAt: string;
+  debugCode?: string | null;
 };
 
 export type ServiceReview = {
@@ -82,6 +107,12 @@ export type UserProfile = {
   emailVerifiedAt: string | null;
   appTourCompletedAt: string | null;
   hasCompletedProfileSetup: boolean;
+  providerVerificationStatus: ProviderVerificationStatus;
+  providerVerificationSubmittedAt: string | null;
+  providerVerificationRequestedReason: string | null;
+  providerVerificationDecisionNote: string | null;
+  providerVerificationDocumentVersion: number;
+  providerVerificationHasDocuments: boolean;
   pixKeyType: PixKeyType | null;
   pixKey: string;
   hasPixKeyConfigured: boolean;
@@ -109,9 +140,15 @@ export type ServiceTimelineEvent = {
 
 export type ServiceDispute = {
   status: "open" | "resolved" | "refunded" | null;
+  kind: "general" | "provider-no-show";
   reason: string;
   openedAt: string | null;
   openedByUserId: string | null;
+  evidenceImage: string | null;
+  providerResponse: string | null;
+  providerRespondedAt: string | null;
+  providerAcknowledgedNoShow: boolean;
+  responseDueAt: string | null;
   resolution: string | null;
   resolvedAt: string | null;
   adminNote: string | null;
@@ -226,6 +263,8 @@ export type ChatThread = {
   serviceRequestId?: string | null;
   serviceType?: PinType | null;
   servicePreview?: string | null;
+  serviceStatus?: ServiceRequestStatus | null;
+  isLocked?: boolean;
 };
 
 export type SupportTicketStatus = "waiting" | "active" | "closed";
@@ -286,6 +325,8 @@ export type ActiveServiceRequest = {
   dismissedWorkerIds: string[];
   payment: ServicePaymentSnapshot | null;
   dispute: ServiceDispute | null;
+  noShowEligibleAt: string | null;
+  canReportNoShow: boolean;
   timeline: ServiceTimelineEvent[];
   details: {
     title: string;
@@ -342,6 +383,7 @@ export type AppState = {
   themePreference: ThemePreference;
   sessionToken: string | null;
   pendingVerification: PendingVerification | null;
+  pendingDeviceVerification: PendingDeviceVerification | null;
   user: UserProfile | null;
   pins: ServicePin[];
   posts: Post[];
@@ -473,6 +515,7 @@ export type AdminServiceRequestRecord = {
   requesterEmail: string;
   workerName: string | null;
   workerEmail: string | null;
+  workerNoShowCount: number;
   latitude: number;
   longitude: number;
   accuracy: number | null;
@@ -502,6 +545,33 @@ export type AdminOverview = {
   pendingWithdrawals: number;
   grossVolumeCents: number;
   feeVolumeCents: number;
+  pendingProviderVerifications: number;
+};
+
+export type AdminProviderVerificationRecord = {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  birthDate: string;
+  cpf: string;
+  avatar: string | null;
+  headline: string;
+  createdAt: string;
+  updatedAt: string;
+  emailVerifiedAt: string | null;
+  cpfVerifiedAt: string | null;
+  profileCompletedAt: string | null;
+  status: ProviderVerificationStatus;
+  submittedAt: string | null;
+  decidedAt: string | null;
+  requestedReason: string | null;
+  decisionNote: string | null;
+  documentVersion: number;
+  rgNumber: string;
+  faceImage: string | null;
+  rgDocumentImage: string | null;
+  reviewerName: string | null;
 };
 
 export type AdminRequestStatusCount = {
@@ -595,6 +665,7 @@ export type AdminDashboard = {
   requestStatusCounts: AdminRequestStatusCount[];
   requests: AdminServiceRequestRecord[];
   users: AdminUserRecord[];
+  providerVerifications: AdminProviderVerificationRecord[];
   supportOverview: AdminSupportOverview;
   withdrawals: WorkerWithdrawalRecord[];
 };

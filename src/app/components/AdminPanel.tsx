@@ -3,6 +3,7 @@ import {
   ArrowRightLeft,
   BadgeDollarSign,
   Download,
+  FileCheck2,
   Headset,
   LayoutDashboard,
   LogOut,
@@ -35,6 +36,7 @@ import {
 import type {
   AdminDashboard,
   AdminHealthSnapshot,
+  AdminProviderVerificationRecord,
   AdminServiceRequestRecord,
   AdminUserRecord,
 } from "../types";
@@ -42,9 +44,10 @@ import { formatCurrencyAmount, getInitials } from "../utils/helpers";
 import { AdminSupportDesk } from "./admin/AdminSupportDesk";
 import { BrandSplash } from "./BrandSplash";
 
-type AdminSection = "overview" | "map" | "users" | "requests" | "wallet" | "system" | "support";
+type AdminSection = "overview" | "map" | "verification" | "users" | "requests" | "wallet" | "system" | "support";
 type RequestTab = "all" | "map" | "live" | "disputes";
 type UserTab = "all" | "new" | "verified" | "pending";
+type VerificationTab = "review" | "waiting" | "approved" | "rejected" | "all";
 
 const LIVE_REQUEST_STATUSES = new Set([
   "searching",
@@ -67,6 +70,7 @@ const PENDING_WITHDRAWAL_STATUSES = new Set([
 const adminSections: Array<{ id: AdminSection; label: string; icon: LucideIcon }> = [
   { id: "overview", label: "Resumo", icon: LayoutDashboard },
   { id: "map", label: "Mapa", icon: MapPinned },
+  { id: "verification", label: "Verificações", icon: FileCheck2 },
   { id: "users", label: "Usuários(as)", icon: Users },
   { id: "requests", label: "Pedidos", icon: Smartphone },
   { id: "wallet", label: "Carteira", icon: Wallet },
@@ -134,6 +138,9 @@ export function AdminPanel() {
   const [requestTab, setRequestTab] = useState<RequestTab>("all");
   const [userTab, setUserTab] = useState<UserTab>("all");
   const [userSearch, setUserSearch] = useState("");
+  const [verificationTab, setVerificationTab] = useState<VerificationTab>("review");
+  const [verificationNotes, setVerificationNotes] = useState<Record<string, string>>({});
+  const [updatingVerificationId, setUpdatingVerificationId] = useState<string | null>(null);
   const [resolutionNote, setResolutionNote] = useState<Record<string, string>>({});
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
@@ -146,7 +153,12 @@ export function AdminPanel() {
       mode === "refresh" ? setIsRefreshing(true) : setIsLoading(true);
       try {
         const [nextDashboard, nextHealth] = await Promise.all([
-          apiRequest<AdminDashboard>("/api/admin/dashboard", { token: sessionToken }),
+          apiRequest<AdminDashboard>(
+            activeSection === "verification"
+              ? "/api/admin/dashboard?providerDocuments=1"
+              : "/api/admin/dashboard",
+            { token: sessionToken }
+          ),
           apiRequest<AdminHealthSnapshot>("/api/health"),
         ]);
         setDashboard(nextDashboard);
@@ -159,7 +171,7 @@ export function AdminPanel() {
         setIsRefreshing(false);
       }
     },
-    [sessionToken]
+    [activeSection, sessionToken]
   );
 
   useEffect(() => {
@@ -207,6 +219,18 @@ export function AdminPanel() {
     });
   }, [dashboard?.users, userSearch, userTab]);
 
+  const filteredProviderVerifications = useMemo(() => {
+    return (dashboard?.providerVerifications ?? []).filter((entry) => {
+      if (verificationTab === "review") return entry.status === "under_review";
+      if (verificationTab === "waiting") {
+        return entry.status === "pending_documents" || entry.status === "changes_requested";
+      }
+      if (verificationTab === "approved") return entry.status === "approved";
+      if (verificationTab === "rejected") return entry.status === "rejected";
+      return true;
+    });
+  }, [dashboard?.providerVerifications, verificationTab]);
+
   const handleResolveDispute = async (request: AdminServiceRequestRecord, action: "continue" | "refund") => {
     if (!sessionToken || resolvingId) return;
     setResolvingId(request.id);
@@ -244,6 +268,36 @@ export function AdminPanel() {
       setError(actionError instanceof Error ? actionError.message : "Não conseguimos atualizar este usuário agora.");
     } finally {
       setUpdatingUserId(null);
+    }
+  };
+
+  const handleProviderVerification = async (
+    providerUserId: string,
+    action: "approve" | "request-documents" | "reject"
+  ) => {
+    if (!sessionToken || updatingVerificationId) return;
+    setUpdatingVerificationId(providerUserId);
+    setError("");
+
+    try {
+      await apiRequest(`/api/admin/provider-verifications/${providerUserId}`, {
+        method: "PATCH",
+        token: sessionToken,
+        body: {
+          action,
+          reason: verificationNotes[providerUserId] ?? "",
+        },
+      });
+      setVerificationNotes((current) => ({ ...current, [providerUserId]: "" }));
+      await loadDashboard("refresh");
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Não conseguimos concluir a verificação deste prestador."
+      );
+    } finally {
+      setUpdatingVerificationId(null);
     }
   };
 
@@ -300,7 +354,7 @@ export function AdminPanel() {
               </button>
             </div>
           </div>
-          <nav className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-7">
+          <nav className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-8">
             {adminSections.map((section) => (
               <button
                 key={section.id}
@@ -327,6 +381,27 @@ export function AdminPanel() {
 
         {activeSection === "map" ? (
           <AdminLiveMap requests={mapRequests} updatedAt={health?.time ?? null} isLoading={isLoading} />
+        ) : null}
+
+        {activeSection === "verification" ? (
+          <ProviderVerificationSection
+            providers={filteredProviderVerifications}
+            allProviders={dashboard?.providerVerifications ?? []}
+            tab={verificationTab}
+            isLoading={isLoading}
+            updatingId={updatingVerificationId}
+            notes={verificationNotes}
+            onTabChange={setVerificationTab}
+            onNoteChange={(providerId, value) =>
+              setVerificationNotes((current) => ({
+                ...current,
+                [providerId]: value.slice(0, 500),
+              }))
+            }
+            onAction={(providerId, action) =>
+              void handleProviderVerification(providerId, action)
+            }
+          />
         ) : null}
 
         {activeSection === "users" ? (
@@ -419,6 +494,7 @@ function OverviewSection({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Usuários(as)" value={dashboard?.overview.totalUsers ?? 0} icon={Users} tone="blue" />
         <MetricCard label="CPF verificado" value={dashboard?.overview.verifiedUsers ?? 0} icon={ShieldCheck} tone="emerald" />
+        <MetricCard label="Análises pendentes" value={dashboard?.overview.pendingProviderVerifications ?? 0} icon={FileCheck2} tone="amber" />
         <MetricCard label="Mapa" value={dashboard?.overview.openMapRequests ?? 0} icon={MapPinned} tone="amber" />
         <MetricCard label="SAC" value={dashboard?.overview.supportOpenTickets ?? 0} icon={Headset} tone="rose" />
         <MetricCard label="Volume" value={formatCurrencyAmount((dashboard?.overview.grossVolumeCents ?? 0) / 100)} icon={BadgeDollarSign} tone="blue" />
@@ -690,6 +766,202 @@ function syncAdminServiceAreaOverlays(
     outline.setMap(map);
     outline.setPaths(SERVICE_AREA_PATHS[index]);
   });
+}
+
+function providerVerificationBadge(status: AdminProviderVerificationRecord["status"]) {
+  if (status === "approved") return { label: "Aprovado", tone: badge("emerald") };
+  if (status === "rejected") return { label: "Recusado", tone: badge("rose") };
+  if (status === "under_review") return { label: "Em análise", tone: badge("blue") };
+  if (status === "changes_requested") return { label: "Reenvio solicitado", tone: badge("amber") };
+  return { label: "Aguardando documentos", tone: badge("slate") };
+}
+
+function formatBirthDate(value: string) {
+  const [year, month, day] = String(value ?? "").split("-");
+  return year && month && day ? `${day}/${month}/${year}` : value || "-";
+}
+
+function ProviderVerificationSection({
+  providers,
+  allProviders,
+  tab,
+  isLoading,
+  updatingId,
+  notes,
+  onTabChange,
+  onNoteChange,
+  onAction,
+}: {
+  providers: AdminProviderVerificationRecord[];
+  allProviders: AdminProviderVerificationRecord[];
+  tab: VerificationTab;
+  isLoading: boolean;
+  updatingId: string | null;
+  notes: Record<string, string>;
+  onTabChange: (tab: VerificationTab) => void;
+  onNoteChange: (providerId: string, value: string) => void;
+  onAction: (
+    providerId: string,
+    action: "approve" | "request-documents" | "reject"
+  ) => void;
+}) {
+  const count = (statuses: AdminProviderVerificationRecord["status"][]) =>
+    allProviders.filter((provider) => statuses.includes(provider.status)).length;
+
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-white">Verificação de prestadores</h2>
+          <p className="mt-1 text-sm text-slate-400">
+            Confira identidade e documentos antes de liberar o acesso ao mapa e à carteira.
+          </p>
+        </div>
+        <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${badge("blue")}`}>
+          {count(["under_review"])} para analisar
+        </span>
+      </div>
+
+      <SegmentedTabs
+        value={tab}
+        items={[
+          ["review", `Em análise (${count(["under_review"])})`],
+          ["waiting", `Aguardando (${count(["pending_documents", "changes_requested"])})`],
+          ["approved", `Aprovados (${count(["approved"])})`],
+          ["rejected", `Recusados (${count(["rejected"])})`],
+          ["all", `Todos (${allProviders.length})`],
+        ]}
+        onChange={(value) => onTabChange(value as VerificationTab)}
+      />
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        {isLoading ? (
+          <EmptyPanel text="Carregando verificações..." />
+        ) : providers.length ? (
+          providers.map((provider) => (
+            <ProviderVerificationCard
+              key={provider.id}
+              provider={provider}
+              note={notes[provider.id] ?? ""}
+              isBusy={updatingId === provider.id}
+              onNoteChange={(value) => onNoteChange(provider.id, value)}
+              onAction={(action) => onAction(provider.id, action)}
+            />
+          ))
+        ) : (
+          <EmptyPanel text="Nenhum prestador neste filtro." />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProviderVerificationCard({
+  provider,
+  note,
+  isBusy,
+  onNoteChange,
+  onAction,
+}: {
+  provider: AdminProviderVerificationRecord;
+  note: string;
+  isBusy: boolean;
+  onNoteChange: (value: string) => void;
+  onAction: (action: "approve" | "request-documents" | "reject") => void;
+}) {
+  const status = providerVerificationBadge(provider.status);
+  const canReview = ["pending_documents", "under_review", "changes_requested"].includes(
+    provider.status
+  );
+
+  return (
+    <article className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-800 font-bold">
+            {provider.avatar ? (
+              <img src={provider.avatar} alt={provider.fullName} className="h-full w-full object-cover" />
+            ) : (
+              getInitials(provider.fullName)
+            )}
+          </div>
+          <div className="min-w-0">
+            <h3 className="truncate font-bold text-white">{provider.fullName}</h3>
+            <p className="truncate text-xs text-slate-400">{provider.email}</p>
+          </div>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${status.tone}`}>
+          {status.label}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+        <VerificationDatum label="Telefone" value={provider.phone || "-"} />
+        <VerificationDatum label="Nascimento" value={formatBirthDate(provider.birthDate)} />
+        <VerificationDatum label="CPF" value={provider.cpf || "Não enviado"} />
+        <VerificationDatum label="RG" value={provider.rgNumber || "Não enviado"} />
+        <VerificationDatum label="Cadastro" value={formatDate(provider.createdAt, true)} />
+        <VerificationDatum label="Envio" value={formatDate(provider.submittedAt, true)} />
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <VerificationDocument title="Foto do rosto" image={provider.faceImage} />
+        <VerificationDocument title="Documento RG" image={provider.rgDocumentImage} />
+      </div>
+
+      {provider.requestedReason || provider.decisionNote ? (
+        <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs leading-5 text-slate-300">
+          <strong>Última mensagem:</strong> {provider.requestedReason || provider.decisionNote}
+          {provider.reviewerName ? <span className="mt-1 block text-slate-500">Por {provider.reviewerName}</span> : null}
+        </div>
+      ) : null}
+
+      {canReview ? (
+        <>
+          <textarea
+            value={note}
+            onChange={(event) => onNoteChange(event.target.value)}
+            rows={3}
+            placeholder="Motivo obrigatório para solicitar novamente ou recusar"
+            className="mt-4 w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-blue-500"
+          />
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <button type="button" disabled={isBusy || provider.status !== "under_review"} onClick={() => onAction("approve")} className="rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-bold text-white disabled:opacity-40">
+              {isBusy ? "Salvando..." : "Aprovar"}
+            </button>
+            <button type="button" disabled={isBusy} onClick={() => onAction("request-documents")} className="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-slate-950 disabled:opacity-40">
+              Solicitar novamente
+            </button>
+            <button type="button" disabled={isBusy} onClick={() => onAction("reject")} className="rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-bold text-white disabled:opacity-40">
+              Recusar
+            </button>
+          </div>
+        </>
+      ) : null}
+    </article>
+  );
+}
+
+function VerificationDatum({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="mt-1 break-words font-semibold text-slate-100">{value}</p>
+    </div>
+  );
+}
+
+function VerificationDocument({ title, image }: { title: string; image: string | null }) {
+  if (!image) {
+    return <div className="flex h-44 items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-950 text-sm text-slate-500">{title} não enviado</div>;
+  }
+
+  return (
+    <a href={image} target="_blank" rel="noreferrer" className="group relative block h-44 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+      <img src={image} alt={title} className="h-full w-full object-contain transition group-hover:scale-[1.02]" />
+      <span className="absolute bottom-2 left-2 rounded-lg bg-slate-950/90 px-2 py-1 text-xs font-semibold text-white">{title} · ampliar</span>
+    </a>
+  );
 }
 
 function UsersSection({
@@ -1145,7 +1417,11 @@ function RequestCard({
           <div className="flex flex-wrap gap-2">
             <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${requestBadge(request.status)}`}>{request.status}</span>
             <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs font-semibold text-slate-200">{request.category}</span>
-            {request.dispute?.status === "open" ? <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${badge("rose")}`}>Disputa</span> : null}
+            {request.dispute?.status === "open" ? (
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${badge("rose")}`}>
+                {request.dispute.kind === "provider-no-show" ? "Ausência / ressarcimento" : "Disputa"}
+              </span>
+            ) : null}
           </div>
           <p className="mt-3 text-base font-semibold text-slate-50">
             {request.agreementTitle || request.description}
@@ -1156,6 +1432,11 @@ function RequestCard({
           <div className="mt-2 grid gap-1 text-sm text-slate-300">
             <p>Cliente: {request.requesterName}</p>
             <p>Profissional: {request.workerName ?? "Não assumido(a)"}</p>
+            {request.workerNoShowCount > 0 ? (
+              <p className="font-semibold text-rose-300">
+                Ocorrências confirmadas de ausência: {request.workerNoShowCount}
+              </p>
+            ) : null}
             <p>{formatDate(request.createdAt, true)} é {formatDate(request.updatedAt, true)}</p>
           </div>
         </div>
@@ -1168,8 +1449,41 @@ function RequestCard({
 
       {request.dispute ? (
         <div className="mt-4 rounded-xl border border-rose-500/35 bg-rose-500/12 p-4">
-          <p className="text-sm font-semibold text-rose-100">Disputa</p>
+          <p className="text-sm font-semibold text-rose-100">
+            {request.dispute.kind === "provider-no-show"
+              ? "Solicitação de ressarcimento por ausência"
+              : "Disputa"}
+          </p>
           <p className="mt-2 text-sm text-rose-100">{request.dispute.reason}</p>
+          {request.dispute.evidenceImage ? (
+            <a
+              href={request.dispute.evidenceImage}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 block overflow-hidden rounded-xl border border-rose-400/30 bg-slate-950"
+            >
+              <img
+                src={request.dispute.evidenceImage}
+                alt="Evidência enviada pelo cliente"
+                className="max-h-64 w-full object-contain"
+              />
+              <span className="block px-3 py-2 text-xs font-semibold text-rose-100">
+                Abrir evidência em tamanho completo
+              </span>
+            </a>
+          ) : null}
+          {request.dispute.kind === "provider-no-show" ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl bg-slate-950/70 px-3 py-2 text-xs text-slate-200">
+                <span className="block font-semibold text-slate-400">Prazo de resposta</span>
+                {formatDate(request.dispute.responseDueAt)}
+              </div>
+              <div className="rounded-xl bg-slate-950/70 px-3 py-2 text-xs text-slate-200">
+                <span className="block font-semibold text-slate-400">Resposta do prestador</span>
+                {request.dispute.providerResponse || "Ainda não respondeu"}
+              </div>
+            </div>
+          ) : null}
           {request.dispute.status === "open" ? (
             <>
               <textarea
@@ -1184,7 +1498,7 @@ function RequestCard({
                   {resolving ? "Salvando..." : "Manter atendimento"}
                 </button>
                 <button type="button" onClick={() => onResolve("refund")} disabled={resolving} className="rounded-xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-70">
-                  {resolving ? "Reembolsando..." : "Reembolsar"}
+                  {resolving ? "Ressarcindo..." : "Ressarcir valor total"}
                 </button>
               </div>
             </>

@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   CalendarDays,
+  Camera,
   CheckCircle2,
+  Clock3,
   MapPin,
   ShieldAlert,
   Star,
   X,
 } from "lucide-react";
 import { useErrorToast } from "../../hooks/useErrorToast";
+import { requestNativeCameraPermission } from "../../lib/nativeMediaPermissions";
 import type { ActiveServiceRequest, ServiceReviewPayload } from "../../types";
 import { formatDelayTolerance, formatServiceDate } from "../../utils/helpers";
+import { readImageAsOptimizedDataUrl } from "../../utils/helpers";
 import { ServiceTimeline } from "./ServiceTimeline";
 
 function getVisibleServiceLocation(request: ActiveServiceRequest) {
@@ -112,6 +116,14 @@ type ActiveRequestSheetProps = {
   onMarkWorkerArrived: () => Promise<{ ok: boolean; error?: string }>;
   onReleasePayment: (payload: ServiceReviewPayload) => Promise<{ ok: boolean; error?: string }>;
   onOpenDispute: (reason: string) => Promise<{ ok: boolean; error?: string }>;
+  onReportNoShow: (payload: {
+    reason: string;
+    evidenceImage?: string | null;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  onRespondNoShow: (payload: {
+    response: string;
+    acknowledgesNoShow: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 export function ActiveRequestSheet({
@@ -130,7 +142,10 @@ export function ActiveRequestSheet({
   onMarkWorkerArrived,
   onReleasePayment,
   onOpenDispute,
+  onReportNoShow,
+  onRespondNoShow,
 }: ActiveRequestSheetProps) {
+  const noShowEvidenceInputRef = useRef<HTMLInputElement | null>(null);
   const [isReviewFormOpen, setIsReviewFormOpen] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
@@ -140,8 +155,17 @@ export function ActiveRequestSheet({
   const [disputeReason, setDisputeReason] = useState("");
   const [disputeError, setDisputeError] = useState("");
   const [isOpeningDispute, setIsOpeningDispute] = useState(false);
+  const [isNoShowFormOpen, setIsNoShowFormOpen] = useState(false);
+  const [noShowReason, setNoShowReason] = useState("");
+  const [noShowEvidenceImage, setNoShowEvidenceImage] = useState<string | null>(null);
+  const [noShowError, setNoShowError] = useState("");
+  const [isSubmittingNoShow, setIsSubmittingNoShow] = useState(false);
+  const [providerResponse, setProviderResponse] = useState("");
+  const [isRespondingNoShow, setIsRespondingNoShow] = useState(false);
+  const [currentTimestamp, setCurrentTimestamp] = useState(() => Date.now());
   useErrorToast(reviewError);
   useErrorToast(disputeError);
+  useErrorToast(noShowError);
 
   useEffect(() => {
     if (!isOpen) {
@@ -149,7 +173,16 @@ export function ActiveRequestSheet({
       setIsDisputeFormOpen(false);
       setReviewError("");
       setDisputeError("");
+      setIsNoShowFormOpen(false);
+      setNoShowError("");
     }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    setCurrentTimestamp(Date.now());
+    const intervalId = window.setInterval(() => setCurrentTimestamp(Date.now()), 30_000);
+    return () => window.clearInterval(intervalId);
   }, [isOpen]);
 
   if (!request || !isOpen) {
@@ -157,6 +190,95 @@ export function ActiveRequestSheet({
   }
 
   const hasWorkerArrived = hasWorkerArrivalEvent(request);
+  const isNoShowClaim = request.dispute?.kind === "provider-no-show";
+  const noShowEligibleTimestamp = request.noShowEligibleAt
+    ? new Date(request.noShowEligibleAt).getTime()
+    : Number.NaN;
+  const canReportNoShow = Boolean(
+    request.currentUserRole === "requester" &&
+      request.status === "confirmed" &&
+      !request.dispute?.status &&
+      !hasWorkerArrived &&
+      Number.isFinite(noShowEligibleTimestamp) &&
+      currentTimestamp >= noShowEligibleTimestamp
+  );
+
+  const handleNoShowEvidence = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const image = await readImageAsOptimizedDataUrl(file, {
+        maxDimension: 960,
+        quality: 0.72,
+      });
+      setNoShowEvidenceImage(image);
+      setNoShowError("");
+    } catch (error) {
+      setNoShowError(error instanceof Error ? error.message : "Não conseguimos anexar a foto.");
+    }
+  };
+
+  const handleOpenNoShowEvidencePicker = async () => {
+    const allowed = await requestNativeCameraPermission();
+
+    if (!allowed) {
+      setNoShowError("Ative a permissão da câmera para anexar uma foto.");
+      return;
+    }
+
+    noShowEvidenceInputRef.current?.click();
+  };
+
+  const handleReportNoShow = async () => {
+    if (noShowReason.trim().length < 12) {
+      setNoShowError("Explique o que aconteceu em pelo menos 12 caracteres.");
+      return;
+    }
+
+    setIsSubmittingNoShow(true);
+    setNoShowError("");
+    const result = await onReportNoShow({
+      reason: noShowReason.trim(),
+      evidenceImage: noShowEvidenceImage,
+    });
+    setIsSubmittingNoShow(false);
+
+    if (!result.ok) {
+      setNoShowError(result.error ?? "Não conseguimos solicitar o ressarcimento agora.");
+      return;
+    }
+
+    setIsNoShowFormOpen(false);
+    setNoShowReason("");
+    setNoShowEvidenceImage(null);
+  };
+
+  const handleRespondNoShow = async (acknowledgesNoShow: boolean) => {
+    if (!acknowledgesNoShow && providerResponse.trim().length < 12) {
+      setNoShowError("Explique sua versão em pelo menos 12 caracteres.");
+      return;
+    }
+
+    setIsRespondingNoShow(true);
+    setNoShowError("");
+    const result = await onRespondNoShow({
+      acknowledgesNoShow,
+      response: acknowledgesNoShow
+        ? providerResponse.trim() || "Confirmo que não compareci ao atendimento."
+        : providerResponse.trim(),
+    });
+    setIsRespondingNoShow(false);
+
+    if (!result.ok) {
+      setNoShowError(result.error ?? "Não conseguimos registrar sua resposta agora.");
+      return;
+    }
+
+    setProviderResponse("");
+    if (acknowledgesNoShow) onClose();
+  };
 
   const handleReleasePayment = async () => {
     if (!hasWorkerArrivalEvent(request)) {
@@ -360,16 +482,98 @@ export function ActiveRequestSheet({
                   >
                     <div className="flex items-start gap-3">
                       <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="font-semibold">
-                          {request.dispute.status === "open"
-                            ? "Disputa em análise"
-                            : "Disputa resolvida"}
+                          {isNoShowClaim
+                            ? request.dispute.status === "open"
+                              ? "Ressarcimento em análise"
+                              : "Ressarcimento resolvido"
+                            : request.dispute.status === "open"
+                              ? "Disputa em análise"
+                              : "Disputa resolvida"}
                         </p>
                         <p className="mt-1 leading-relaxed">
                           {request.dispute.reason ||
                             "O suporte registrou uma atualização para este atendimento."}
                         </p>
+
+                        {isNoShowClaim && request.dispute.evidenceImage ? (
+                          <img
+                            src={request.dispute.evidenceImage}
+                            alt="Evidência enviada pelo cliente"
+                            className="mt-3 max-h-48 w-full rounded-2xl border border-rose-200 object-cover"
+                          />
+                        ) : null}
+
+                        {isNoShowClaim && request.dispute.responseDueAt ? (
+                          <div className="mt-3 flex items-start gap-2 rounded-2xl bg-white/70 px-3 py-2 text-xs font-semibold leading-relaxed">
+                            <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
+                            <span>
+                              Prazo de resposta do prestador:{" "}
+                              {new Intl.DateTimeFormat("pt-BR", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              }).format(new Date(request.dispute.responseDueAt))}.
+                            </span>
+                          </div>
+                        ) : null}
+
+                        {isNoShowClaim && request.dispute.providerResponse ? (
+                          <div className="mt-3 rounded-2xl bg-white/80 px-3 py-3">
+                            <p className="text-[10px] font-black uppercase tracking-[0.14em] opacity-70">
+                              Resposta do prestador
+                            </p>
+                            <p className="mt-1 leading-relaxed">
+                              {request.dispute.providerResponse}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {isNoShowClaim &&
+                        request.dispute.status === "open" &&
+                        request.currentUserRole === "worker" &&
+                        !request.dispute.providerRespondedAt ? (
+                          <div className="mt-4 rounded-2xl border border-rose-200 bg-white p-3">
+                            <p className="text-xs font-black text-slate-900">
+                              Responda antes do prazo
+                            </p>
+                            <textarea
+                              value={providerResponse}
+                              onChange={(event) =>
+                                setProviderResponse(event.target.value.slice(0, 500))
+                              }
+                              rows={3}
+                              placeholder="Explique sua versão ou confirme que não compareceu."
+                              className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-500"
+                            />
+                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              <button
+                                type="button"
+                                disabled={isRespondingNoShow}
+                                onClick={() => void handleRespondNoShow(false)}
+                                className="rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-black text-white disabled:opacity-60"
+                              >
+                                Contestar ausência
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isRespondingNoShow}
+                                onClick={() => void handleRespondNoShow(true)}
+                                className="rounded-xl bg-rose-600 px-3 py-2.5 text-xs font-black text-white disabled:opacity-60"
+                              >
+                                Confirmar que não fui
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {noShowError ? (
+                          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-rose-700">
+                            {noShowError}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -443,7 +647,7 @@ export function ActiveRequestSheet({
                           <button
                             type="button"
                             onClick={() => void handleMarkWorkerArrived()}
-                            disabled={isMarkingWorkerArrived}
+                            disabled={isMarkingWorkerArrived || request.dispute?.status === "open"}
                             className="rounded-[24px] bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-70"
                           >
                             {isMarkingWorkerArrived
@@ -467,13 +671,38 @@ export function ActiveRequestSheet({
                             setReviewError("");
                             setIsReviewFormOpen((current) => !current);
                           }}
-                          disabled={isReleasingPayment || !hasWorkerArrived}
+                          disabled={
+                            isReleasingPayment ||
+                            !hasWorkerArrived ||
+                            request.dispute?.status === "open"
+                          }
                           className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                           aria-label={isReviewFormOpen ? "Fechar avaliação" : "Liberar pagamento"}
                         >
                           {isReviewFormOpen ? <X className="mx-auto h-4 w-4" /> : "Liberar pagamento"}
                         </button>
                       </>
+                    ) : null}
+
+                    {canReportNoShow ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReviewError("");
+                          setIsReviewFormOpen(false);
+                          setDisputeError("");
+                          setIsDisputeFormOpen(false);
+                          setNoShowError("");
+                          setIsNoShowFormOpen((current) => !current);
+                        }}
+                        className="rounded-[24px] border border-rose-300 bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-700"
+                      >
+                        {isNoShowFormOpen ? (
+                          <X className="mx-auto h-4 w-4" />
+                        ) : (
+                          "Prestador não compareceu"
+                        )}
+                      </button>
                     ) : null}
 
                     {request.status === "searching" ? (
@@ -505,6 +734,96 @@ export function ActiveRequestSheet({
                     ) : null}
                   </div>
                 )}
+
+                {isNoShowFormOpen ? (
+                  <div className="mt-5 worqo-flat-panel worqo-flat-panel--rose px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-rose-700">
+                          Proteção do cliente
+                        </p>
+                        <h3 className="mt-2 text-xl font-bold text-slate-900">
+                          Solicitar ressarcimento integral
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsNoShowFormOpen(false)}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-white text-rose-700"
+                        aria-label="Fechar solicitação de ressarcimento"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <p className="mt-3 text-sm leading-relaxed text-slate-600">
+                      Use esta opção somente se o horário e toda a tolerância já terminaram e o
+                      prestador realmente não apareceu. O pagamento ficará bloqueado durante a
+                      análise.
+                    </p>
+
+                    <textarea
+                      value={noShowReason}
+                      onChange={(event) => setNoShowReason(event.target.value.slice(0, 320))}
+                      rows={4}
+                      placeholder="Explique há quanto tempo está aguardando e se tentou falar pelo chat."
+                      className="mt-4 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-rose-400"
+                    />
+
+                    <input
+                      ref={noShowEvidenceInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(event) => void handleNoShowEvidence(event)}
+                    />
+
+                    {noShowEvidenceImage ? (
+                      <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <img
+                          src={noShowEvidenceImage}
+                          alt="Evidência selecionada"
+                          className="max-h-44 w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNoShowEvidenceImage(null)}
+                          className="w-full px-3 py-2 text-xs font-black text-rose-700"
+                        >
+                          Remover foto
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenNoShowEvidencePicker()}
+                        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-xs font-black text-slate-700"
+                      >
+                        <Camera className="h-4 w-4 text-blue-600" />
+                        Anexar foto opcional
+                      </button>
+                    )}
+
+                    <div className="mt-3 rounded-2xl bg-white px-3 py-3 text-xs font-semibold leading-relaxed text-slate-600">
+                      Se aprovado, o cliente recebe o valor do serviço e todas as taxas pagas. O
+                      Worko não retém nenhuma taxa quando o serviço não aconteceu.
+                    </div>
+
+                    {noShowError ? (
+                      <p className="mt-3 text-sm font-semibold text-rose-700">{noShowError}</p>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => void handleReportNoShow()}
+                      disabled={isSubmittingNoShow}
+                      className="mt-4 inline-flex w-full items-center justify-center rounded-[24px] bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                    >
+                      {isSubmittingNoShow ? "Enviando..." : "Solicitar ressarcimento integral"}
+                    </button>
+                  </div>
+                ) : null}
 
                 {isReviewFormOpen ? (
                   <div className="mt-5 worqo-flat-panel worqo-flat-panel--emerald px-4 py-4">

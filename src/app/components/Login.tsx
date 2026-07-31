@@ -48,9 +48,10 @@ export function Login() {
     const params = callback.searchParams;
     const googleToken = params.get("googleToken");
     const googlePendingRaw = params.get("googlePending");
+    const googleDevicePendingRaw = params.get("googleDevicePending");
     const googleError = params.get("googleError");
 
-    if (!googleToken && !googlePendingRaw && !googleError) {
+    if (!googleToken && !googlePendingRaw && !googleDevicePendingRaw && !googleError) {
       return;
     }
 
@@ -68,6 +69,7 @@ export function Login() {
     }
 
     let googlePending = null;
+    let googleDevicePending = null;
 
     if (googlePendingRaw) {
       try {
@@ -80,7 +82,18 @@ export function Login() {
       }
     }
 
-    if (!googleToken && !googlePending) {
+    if (googleDevicePendingRaw) {
+      try {
+        googleDevicePending = JSON.parse(googleDevicePendingRaw);
+      } catch {
+        setIsGoogleSubmitting(false);
+        setFeedbackTone("error");
+        setFeedback("Não conseguimos preparar a confirmação deste aparelho.");
+        return;
+      }
+    }
+
+    if (!googleToken && !googlePending && !googleDevicePending) {
       return;
     }
 
@@ -89,6 +102,7 @@ export function Login() {
     const result = await completeGoogleLogin({
       token: googleToken ?? undefined,
       pendingVerification: googlePending ?? undefined,
+      pendingDeviceVerification: googleDevicePending ?? undefined,
       rememberMe: params.get("googleRemember") !== "0",
     });
 
@@ -103,6 +117,10 @@ export function Login() {
     setFeedback("");
     if (result.requiresVerification) {
       navigate("/verify", { replace: true });
+      return;
+    }
+    if (result.requiresDeviceVerification) {
+      navigate("/device-verify", { replace: true });
       return;
     }
     navigate(result.user?.isAdmin ? "/admin" : "/app", { replace: true });
@@ -179,14 +197,11 @@ export function Login() {
     }
 
     setFeedback("");
+    if (result.requiresDeviceVerification) {
+      navigate("/device-verify");
+      return;
+    }
     navigate(result.user?.isAdmin ? "/admin" : "/app");
-  };
-
-  const handleRecovery = () => {
-    setFeedbackTone("info");
-    setFeedback(
-      "Para recuperar o acesso, conclua a validação do cadastro e fale com o suporte pelo canal oficial."
-    );
   };
 
   const handleGoogleLogin = async () => {
@@ -279,10 +294,14 @@ export function Login() {
               <label className="text-sm font-medium text-slate-700">Senha</label>
               <button
                 type="button"
-                onClick={handleRecovery}
+                onClick={() =>
+                  navigate(
+                    `/forgot-password${email.trim() ? `?email=${encodeURIComponent(email.trim())}` : ""}`
+                  )
+                }
                 className="text-xs font-semibold text-blue-600 transition-colors hover:text-blue-700"
               >
-                Precisa de ajuda para entrar?
+                Esqueci minha senha
               </button>
             </div>
             <div

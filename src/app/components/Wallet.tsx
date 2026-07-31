@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  ArrowUpRight,
-  Clock3,
   DollarSign,
   Download,
   HelpCircle,
@@ -123,14 +121,12 @@ export function Wallet() {
   const hasEnoughForInstantWithdrawal = availableForInstantCents > instantFeeCents;
   const instantNetPayoutCents = Math.max(availableForInstantCents - instantFeeCents, 0);
   const nextFreeWithdrawalLabel = formatWalletDate(wallet.nextFreeWithdrawalAvailableAt);
-  const standardWithdrawalLabel =
-    isWithdrawingMode === "standard"
-      ? "Solicitando saque..."
-      : availableForStandardCents > 0
-        ? "Saque grátis disponível"
-        : nextFreeWithdrawalLabel
-          ? `Saque grátis em ${nextFreeWithdrawalLabel}`
-          : "Saque grátis após 24h";
+  const standardWithdrawalStatus =
+    availableForStandardCents > 0
+      ? "Disponível agora"
+      : nextFreeWithdrawalLabel
+        ? `Disponível em ${nextFreeWithdrawalLabel}`
+        : "Disponível 24h após o crédito";
 
   const loadWallet = async (mode: "initial" | "refresh" = "initial") => {
     if (!sessionToken) {
@@ -226,22 +222,13 @@ export function Wallet() {
               {isLoading ? "Carregando..." : formatCurrencyAmount(currentBalanceCents / 100)}
             </p>
             <div className="mt-4 worqo-flat-panel px-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div>
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                     Saque imediato
                   </p>
                   <p className="mt-2 text-lg font-bold text-slate-900">
                     {formatCurrencyAmount(instantNetPayoutCents / 100)}
-                  </p>
-                </div>
-
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                    Saque grátis
-                  </p>
-                  <p className="mt-2 text-lg font-bold text-slate-900">
-                    {formatCurrencyAmount(availableForStandardCents / 100)}
                   </p>
                 </div>
               </div>
@@ -308,7 +295,7 @@ export function Wallet() {
 
           <div className="mt-5 flex min-w-0 flex-col gap-3">
             {walletReady ? (
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3">
                 <button
                   type="button"
                   onClick={() => void handleWithdraw("instant")}
@@ -319,10 +306,9 @@ export function Wallet() {
                   }
                   className="inline-flex min-w-0 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <ArrowUpRight className="h-4 w-4" />
                   {isWithdrawingMode === "instant"
                     ? "Solicitando saque..."
-                    : `Saque imediato (${formatCurrencyAmount(instantFeeCents / 100)})`}
+                    : `⚡ Receber agora (taxa de ${formatCurrencyAmount(instantFeeCents / 100)})`}
                 </button>
 
                 <button
@@ -335,8 +321,16 @@ export function Wallet() {
                   }
                   className="inline-flex min-w-0 items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  <Clock3 className="h-4 w-4" />
-                  {standardWithdrawalLabel}
+                  {isWithdrawingMode === "standard" ? (
+                    "Solicitando saque..."
+                  ) : (
+                    <span className="flex flex-col items-center">
+                      <span>🟢 Receber gratuitamente em até 24h</span>
+                      <span className="mt-0.5 text-[11px] font-medium opacity-80">
+                        {standardWithdrawalStatus}
+                      </span>
+                    </span>
+                  )}
                 </button>
               </div>
             ) : (
@@ -348,10 +342,6 @@ export function Wallet() {
                 Ajustar chave Pix CPF
               </Link>
             )}
-
-            <p className="text-xs leading-relaxed text-slate-500">
-              O saque grátis fica disponível 24 horas depois que o valor cair na carteira.
-            </p>
 
             <button
               type="button"

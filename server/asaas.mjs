@@ -8,7 +8,8 @@ import { HttpError } from "./utils.mjs";
 import { normalizeEmail, normalizePhone } from "./validators.mjs";
 
 const SERVICE_FEE_RATE = 0.1;
-const ASAAS_FIXED_FEE_CENTS = 199;
+const MINIMUM_SERVICE_AMOUNT_CENTS = 5_000;
+const ASAAS_FIXED_FEE_CENTS = 299;
 const INSTANT_WITHDRAWAL_FEE_CENTS = 199;
 const FREE_WITHDRAWAL_DELAY_MS = 24 * 60 * 60 * 1000;
 const ASAAS_REQUEST_TIMEOUT_MS = 12_000;
@@ -229,6 +230,7 @@ const selectWorkerWalletEntriesStatement = db.prepare(
       service_requests.dispute_status,
       service_requests.worker_withdrawal_id,
       service_requests.worker_withdrawn_at,
+      service_requests.wallet_available_at,
       service_requests.created_at,
       service_requests.updated_at,
       requester.full_name AS requester_name,
@@ -249,7 +251,8 @@ const selectAvailableCompletedRequestsForWithdrawalStatement = db.prepare(
       service_requests.id,
       service_requests.payment_amount_subtotal_cents,
       service_requests.service_details_json,
-      service_requests.asaas_payment_received_at,
+      service_requests.wallet_available_at,
+      service_requests.created_at,
       service_requests.updated_at
     FROM service_requests
     LEFT JOIN worker_withdrawals ON worker_withdrawals.id = service_requests.worker_withdrawal_id
@@ -274,7 +277,8 @@ const selectFreeWithdrawalNotificationCandidatesStatement = db.prepare(
       service_requests.description,
       service_requests.service_details_json,
       service_requests.payment_amount_subtotal_cents,
-      service_requests.asaas_payment_received_at,
+      service_requests.wallet_available_at,
+      service_requests.created_at,
       service_requests.updated_at,
       requester.full_name AS requester_name,
       worker.full_name AS worker_name
@@ -619,7 +623,7 @@ function doesStoredPixCpfMatchUser(pixKeyType, pixKey, cpfDigits) {
 
 function isStandardWithdrawalEligible(row) {
   const referenceDate = new Date(
-    row?.asaas_payment_received_at ?? row?.updated_at ?? row?.created_at ?? nowIso()
+    row?.wallet_available_at ?? row?.updated_at ?? row?.created_at ?? nowIso()
   );
 
   if (Number.isNaN(referenceDate.getTime())) {
@@ -631,7 +635,7 @@ function isStandardWithdrawalEligible(row) {
 
 function getFreeWithdrawalAvailableAt(row) {
   const referenceDate = new Date(
-    row?.asaas_payment_received_at ?? row?.updated_at ?? row?.created_at ?? nowIso()
+    row?.wallet_available_at ?? row?.updated_at ?? row?.created_at ?? nowIso()
   );
 
   if (Number.isNaN(referenceDate.getTime())) {
@@ -1383,8 +1387,8 @@ async function createAsaasPaymentForServiceRequestInternal(userId, requestId) {
       ? details.title.trim().replace(/\s+/g, " ").slice(0, 120)
       : requestRow.description;
 
-  if (subtotalCents <= 0) {
-    throw new HttpError(409, "O valor do atendimento ainda não foi definido corretamente.");
+  if (subtotalCents < MINIMUM_SERVICE_AMOUNT_CENTS) {
+    throw new HttpError(409, "O valor mínimo aceito para um serviço é R$ 50,00.");
   }
 
   const feeCents = calculatePlatformFeeCents(subtotalCents);
@@ -1722,6 +1726,16 @@ export async function getAsaasWalletSummaryForUser(userId) {
     throw new HttpError(404, "Usuário(a) não encontrado(a).");
   }
 
+  if (
+    user.account_kind !== "provider" ||
+    user.provider_verification_status !== "approved"
+  ) {
+    throw new HttpError(
+      403,
+      "A carteira fica disponível depois que o cadastro de prestador(a) for aprovado."
+    );
+  }
+
   const pixKeyMatchesCpf = doesStoredPixCpfMatchUser(
     user.pix_withdrawal_key_type,
     user.pix_withdrawal_key,
@@ -1866,6 +1880,16 @@ export async function createPixWithdrawalForUser(userId, options = {}) {
 
   if (!user) {
     throw new HttpError(404, "Usuário(a) não encontrado(a).");
+  }
+
+  if (
+    user.account_kind !== "provider" ||
+    user.provider_verification_status !== "approved"
+  ) {
+    throw new HttpError(
+      403,
+      "Seu cadastro de prestador(a) precisa ser aprovado antes de solicitar saques."
+    );
   }
 
   if (!user.pix_withdrawal_key_type || !user.pix_withdrawal_key) {

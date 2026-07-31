@@ -24,6 +24,7 @@ import {
   formatCurrencyInput,
   formatDelayTolerance,
   formatScheduleInput,
+  MINIMUM_SERVICE_AMOUNT,
   parseCurrencyValue,
 } from "../../utils/helpers";
 
@@ -33,6 +34,14 @@ type ServiceLocationChoice = {
   accuracy: number | null;
   label: string;
 };
+
+function getLocalTodayIso() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 function getBrowserCurrentLocation(): Promise<ServiceLocationChoice> {
   return new Promise((resolve, reject) => {
@@ -127,6 +136,7 @@ export function ServiceDetails() {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isDeletingRequest, setIsDeletingRequest] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const minimumServiceDate = getLocalTodayIso();
   useErrorToast(error);
   useErrorToast(deleteError);
   const remoteTitle = activeServiceRequest?.details?.title ?? "";
@@ -250,13 +260,18 @@ export function ServiceDetails() {
       return;
     }
 
+    if (serviceDate < minimumServiceDate) {
+      setError("Escolha a data de hoje ou uma data futura para o serviço.");
+      return;
+    }
+
     if (title.trim().length < 4) {
       setError("Informe um título mais claro para o acordo.");
       return;
     }
 
-    if (parseCurrencyValue(price) <= 0) {
-      setError("Informe um valor válido para o serviço.");
+    if (parseCurrencyValue(price) < MINIMUM_SERVICE_AMOUNT) {
+      setError("O valor mínimo aceito para um serviço é R$ 50,00.");
       return;
     }
 
@@ -410,9 +425,10 @@ export function ServiceDetails() {
                 value={price}
                 onChange={(event) => setPrice(formatCurrencyInput(event.target.value))}
                 inputMode="numeric"
-                placeholder="Ex.: R$ 180,00"
+                placeholder="Mínimo R$ 50,00"
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
               />
+              <p className="text-xs font-medium text-slate-500">Valor mínimo: R$ 50,00.</p>
             </label>
 
             <label className="space-y-2">
@@ -423,6 +439,7 @@ export function ServiceDetails() {
               <input
                 type="date"
                 value={serviceDate}
+                min={minimumServiceDate}
                 onChange={(event) => setServiceDate(event.target.value)}
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
               />
@@ -485,7 +502,7 @@ export function ServiceDetails() {
               </div>
               <div className="rounded-2xl border border-white bg-white px-4 py-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  Taxa fixa
+                  Taxa de intermediação Worko
                 </p>
                 <p className="mt-1 text-sm font-semibold text-slate-900">
                   {formatCurrencyAmount(asaasFeeAmount)}

@@ -2,7 +2,7 @@ import { LocalNotifications } from "@capacitor/local-notifications";
 import type { AppNotification } from "../types";
 import { isNativeAppRuntime } from "./nativeRuntime";
 
-const CHANNEL_ID = "worqo-general-v2";
+const CHANNEL_ID = "worqo-general-v3-sound";
 const DELIVERED_IDS_STORAGE_KEY = "worqo-native-delivered-notification-ids-v1";
 const MAX_STORED_DELIVERED_IDS = 200;
 const MAX_NATIVE_BODY_LENGTH = 140;
@@ -236,6 +236,7 @@ export async function deliverNativeNotifications(notifications: AppNotification[
           allowWhileIdle: true,
         },
         channelId: CHANNEL_ID,
+        sound: "default",
         smallIcon: "ic_launcher",
         largeIcon:
           notification.kind === "chat-message" || notification.kind === "chat-request"

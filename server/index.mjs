@@ -1,5 +1,10 @@
 import http from "node:http";
-import { getAdminDashboard, assertAdminUser, updateAdminUserState } from "./admin.mjs";
+import {
+  getAdminDashboard,
+  assertAdminUser,
+  updateAdminUserState,
+  updateProviderVerification,
+} from "./admin.mjs";
 import { config } from "./config.mjs";
 import "./db.mjs";
 import { processAsaasWebhookPayload, parseAsaasWebhookPayloadFromRawBody, createAsaasPaymentForServiceRequest, createPixWithdrawalForUser, getAsaasWalletSummaryForUser, notifyFreeWithdrawalAvailability, refreshAsaasPaymentForServiceRequest } from "./asaas.mjs";
@@ -41,10 +46,14 @@ import {
   deleteUserAccount,
   loginUser,
   registerUser,
+  requestPasswordReset,
+  resetPassword,
   revokeSession,
   sendVerificationCode,
+  submitProviderVerification,
   updateUserProfile,
   verifyAccount,
+  verifyDeviceLogin,
   verifyUserCpf,
 } from "./auth-service.mjs";
 import {
@@ -76,10 +85,14 @@ import {
   markServiceChatReadForUser,
   markServiceRequestPaidForUser,
   markServiceRequestWorkerArrivedForUser,
+  openProviderNoShowClaimForRequester,
   openServiceRequestDisputeForUser,
+  processExpiredProviderNoShowClaims,
+  reopenServiceChatForUser,
   releaseServiceRequestPaymentForUser,
   reviewClientForCompletedServiceForUser,
   resolveServiceRequestDisputeForAdmin,
+  respondProviderNoShowClaimForWorker,
   sendServiceChatMessageForUser,
   startServiceRequestFromCommunityChatForUser,
   submitServiceRequestDetailsForUser,
@@ -103,9 +116,22 @@ function sortChatsByUpdatedAt(chats) {
   });
 }
 
-function requireSessionUser(request) {
+function requireSessionUser(request, { allowPendingProvider = false } = {}) {
   const token = getBearerToken(request);
   const user = getSessionUser(token);
+
+  if (
+    !allowPendingProvider &&
+    !user.isAdmin &&
+    user.accountKind === "provider" &&
+    user.providerVerificationStatus !== "approved"
+  ) {
+    throw new HttpError(
+      403,
+      "Seu acesso será liberado depois que a verificação de prestador(a) for aprovada."
+    );
+  }
+
   return { token, user };
 }
 
@@ -273,6 +299,8 @@ function assertSupportedClientRelease(request, pathname) {
 const SMALL_JSON_BODY_OPTIONS = { maxBytes: 32 * 1024 };
 const MEDIUM_JSON_BODY_OPTIONS = { maxBytes: 64 * 1024 };
 const PROFILE_JSON_BODY_OPTIONS = { maxBytes: 1024 * 1024 };
+const PROVIDER_VERIFICATION_JSON_BODY_OPTIONS = { maxBytes: 7 * 1024 * 1024 };
+const NO_SHOW_CLAIM_JSON_BODY_OPTIONS = { maxBytes: 1024 * 1024 };
 const WEBHOOK_JSON_BODY_OPTIONS = { maxBytes: 512 * 1024 };
 
 const server = http.createServer(async (request, response) => {
@@ -503,6 +531,9 @@ const server = http.createServer(async (request, response) => {
             googlePending: session.pendingVerification
               ? JSON.stringify(session.pendingVerification)
               : undefined,
+            googleDevicePending: session.pendingDeviceVerification
+              ? JSON.stringify(session.pendingDeviceVerification)
+              : undefined,
             googleRemember: session.rememberMe ? "1" : "0",
           }, session.returnTo)
         );
@@ -526,9 +557,40 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/auth/login") {
       applyAuthRateLimit(request, "login");
       const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
-      const session = loginUser({
+      const session = await loginUser({
         ...body,
         loginIp: getClientIp(request),
+      });
+      json(response, 200, session);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/password/forgot") {
+      applyAuthRateLimit(request, "password-forgot");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const result = await requestPasswordReset({ email: body.email });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/password/reset") {
+      applyAuthRateLimit(request, "password-reset");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const result = resetPassword({
+        email: body.email,
+        code: body.code,
+        newPassword: body.newPassword,
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/device/verify") {
+      applyAuthRateLimit(request, "device-verify");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const session = verifyDeviceLogin({
+        challengeId: body.challengeId,
+        code: body.code,
       });
       json(response, 200, session);
       return;
@@ -556,7 +618,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "DELETE" && url.pathname === "/api/me/account") {
-      const { user } = requireSessionUser(request);
+      const { user } = requireSessionUser(request, { allowPendingProvider: true });
       const result = deleteUserAccount(user.id);
       json(response, 200, result);
       return;
@@ -580,9 +642,17 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "PATCH" && url.pathname === "/api/me/profile") {
-      const { user } = requireSessionUser(request);
+      const { user } = requireSessionUser(request, { allowPendingProvider: true });
       const body = await readJsonBody(request, PROFILE_JSON_BODY_OPTIONS);
       const updatedUser = updateUserProfile(user.id, body);
+      json(response, 200, { user: updatedUser });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/me/provider-verification") {
+      const { user } = requireSessionUser(request, { allowPendingProvider: true });
+      const body = await readJsonBody(request, PROVIDER_VERIFICATION_JSON_BODY_OPTIONS);
+      const updatedUser = submitProviderVerification(user.id, body);
       json(response, 200, { user: updatedUser });
       return;
     }
@@ -656,7 +726,14 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/admin/dashboard") {
       requireAdminSessionUser(request);
-      json(response, 200, getAdminDashboard());
+      response.setHeader("Cache-Control", "no-store");
+      json(
+        response,
+        200,
+        getAdminDashboard({
+          includeProviderDocuments: url.searchParams.get("providerDocuments") === "1",
+        })
+      );
       return;
     }
 
@@ -781,6 +858,38 @@ const server = http.createServer(async (request, response) => {
       const { user } = requireSessionUser(request);
       const requestId = deleteServiceRequestMatch[1];
       const result = await deleteServiceRequestForUser(user.id, requestId);
+      json(response, 200, result);
+      return;
+    }
+
+    if (
+      request.method === "PATCH" &&
+      url.pathname.startsWith("/api/service-requests/") &&
+      url.pathname.endsWith("/no-show")
+    ) {
+      const { user } = requireSessionUser(request);
+      const requestId = url.pathname
+        .replace("/api/service-requests/", "")
+        .replace("/no-show", "")
+        .replace(/\/$/, "");
+      const body = await readJsonBody(request, NO_SHOW_CLAIM_JSON_BODY_OPTIONS);
+      const updatedRequest = openProviderNoShowClaimForRequester(user.id, requestId, body);
+      json(response, 200, { request: updatedRequest });
+      return;
+    }
+
+    if (
+      request.method === "PATCH" &&
+      url.pathname.startsWith("/api/service-requests/") &&
+      url.pathname.endsWith("/no-show-response")
+    ) {
+      const { user } = requireSessionUser(request);
+      const requestId = url.pathname
+        .replace("/api/service-requests/", "")
+        .replace("/no-show-response", "")
+        .replace(/\/$/, "");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const result = await respondProviderNoShowClaimForWorker(user.id, requestId, body);
       json(response, 200, result);
       return;
     }
@@ -956,6 +1065,23 @@ const server = http.createServer(async (request, response) => {
         reason: body.reason,
       });
       json(response, 200, { user: updatedUser });
+      return;
+    }
+
+    if (
+      request.method === "PATCH" &&
+      url.pathname.startsWith("/api/admin/provider-verifications/")
+    ) {
+      const { user } = requireAdminSessionUser(request);
+      const providerUserId = url.pathname
+        .replace("/api/admin/provider-verifications/", "")
+        .replace(/\/$/, "");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const result = await updateProviderVerification(user.id, providerUserId, {
+        action: body.action,
+        reason: body.reason,
+      });
+      json(response, 200, result);
       return;
     }
 
@@ -1142,6 +1268,21 @@ const server = http.createServer(async (request, response) => {
     if (
       request.method === "POST" &&
       url.pathname.startsWith("/api/chats/") &&
+      url.pathname.endsWith("/reopen")
+    ) {
+      const { user } = requireSessionUser(request);
+      const chatId = url.pathname
+        .replace("/api/chats/", "")
+        .replace("/reopen", "")
+        .replace(/\/$/, "");
+      const chat = reopenServiceChatForUser(user.id, decodeURIComponent(chatId));
+      json(response, 200, { chat });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname.startsWith("/api/chats/") &&
       url.pathname.endsWith("/messages")
     ) {
       applyChatRateLimit(request);
@@ -1222,6 +1363,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 const FREE_WITHDRAWAL_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const NO_SHOW_REFUND_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 function startBackgroundJobs() {
   try {
@@ -1239,6 +1381,18 @@ function startBackgroundJobs() {
       console.warn("Falha ao varrer saques grátis disponíveis.", error);
     }
   }, FREE_WITHDRAWAL_SWEEP_INTERVAL_MS).unref?.();
+
+  void processExpiredProviderNoShowClaims().catch((error) => {
+    recordBackgroundJobFailure("processExpiredProviderNoShowClaims", error);
+    console.warn("Falha ao iniciar a varredura de ressarcimentos por ausência.", error);
+  });
+
+  setInterval(() => {
+    void processExpiredProviderNoShowClaims().catch((error) => {
+      recordBackgroundJobFailure("processExpiredProviderNoShowClaims", error);
+      console.warn("Falha ao processar ressarcimentos por ausência.", error);
+    });
+  }, NO_SHOW_REFUND_SWEEP_INTERVAL_MS).unref?.();
 }
 
 startBackgroundJobs();

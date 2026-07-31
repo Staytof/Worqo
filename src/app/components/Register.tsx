@@ -7,6 +7,7 @@ import {
   Lock,
   Mail,
   Phone,
+  ShieldCheck,
   User,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -118,6 +119,16 @@ export function Register() {
           </h1>
         </div>
       </motion.div>
+
+      {!isAdminRegistration ? (
+        <div className="mb-5 flex w-full items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-blue-900">
+          <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-600" />
+          <p className="text-sm leading-relaxed">
+            Para sua segurança, todos os prestadores são validados e verificados pela administração
+            do Worko antes de terem o acesso profissional liberado.
+          </p>
+        </div>
+      ) : null}
 
       <form className="w-full space-y-4" onSubmit={handleSubmit}>
         {!isAdminRegistration ? (

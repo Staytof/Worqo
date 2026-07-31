@@ -1,5 +1,6 @@
 import { FileText, ShieldCheck } from "lucide-react";
 import { Link } from "react-router";
+import { LEGAL_LAST_UPDATED, LEGAL_VERSION } from "../content/legal";
 import { getSupportWhatsappHref, supportInfo } from "../content/support";
 import { useApp } from "../context/AppContext";
 import { ProfileSectionLayout } from "./profile/ProfileSectionLayout";
@@ -33,6 +34,14 @@ export function ProfileLegal() {
                 ? `Aceite registrado em ${acceptedAtLabel}`
                 : "Aceite registrado na sua conta"}
             </p>
+            <p className="mt-2 text-xs font-semibold leading-relaxed text-emerald-800/80">
+              Versão vigente: {LEGAL_VERSION} · Atualizada em {LEGAL_LAST_UPDATED}
+            </p>
+            {user.legalAcceptedVersion ? (
+              <p className="mt-1 text-xs font-medium text-emerald-800/70">
+                Versão registrada no seu aceite: {user.legalAcceptedVersion}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -46,6 +55,9 @@ export function ProfileLegal() {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="font-bold text-slate-900">Termos de uso</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Regras de cadastro, serviços, Pix, taxas, saques, disputas e ressarcimento.
+              </p>
             </div>
           </Link>
 
@@ -58,6 +70,9 @@ export function ProfileLegal() {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="font-bold text-slate-900">Privacidade</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Dados de conta, documentos, localização, pagamentos, retenção e seus direitos.
+              </p>
             </div>
           </Link>
 

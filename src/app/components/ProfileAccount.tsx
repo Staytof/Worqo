@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useNavigate } from "react-router";
@@ -338,18 +339,18 @@ export function ProfileAccount() {
     navigate("/");
   };
 
-  const handleDeleteAccount = async () => {
+  const openDeleteAccountModal = () => {
+    setDeleteConfirmation("");
+    setStatusMessage("");
+    setIsDeleteConfirmationOpen(true);
+  };
+
+  const confirmDeleteAccount = async () => {
     if (deleteConfirmation.trim().toUpperCase() !== "EXCLUIR") {
       setStatusTone("error");
       setStatusMessage("Digite EXCLUIR para confirmar a exclusão da conta.");
       return;
     }
-
-    setIsDeleteConfirmationOpen(true);
-  };
-
-  const confirmDeleteAccount = async () => {
-    setIsDeleteConfirmationOpen(false);
 
     setIsDeletingAccount(true);
     const result = await deleteAccount();
@@ -361,6 +362,7 @@ export function ProfileAccount() {
       return;
     }
 
+    setIsDeleteConfirmationOpen(false);
     navigate("/", { replace: true });
   };
 
@@ -732,52 +734,15 @@ export function ProfileAccount() {
               <LogOut className="h-4 w-4" />
               Sair da conta
             </button>
-          </div>
 
-          <div className="rounded-[28px] border border-rose-200 bg-rose-50 p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-rose-700">
-              <Trash2 className="h-5 w-5" />
-              <h2 className="font-bold">Excluir conta e dados pessoais</h2>
-            </div>
-            <div className="mt-3 space-y-3 text-sm leading-relaxed text-rose-700">
-              <p>
-                Você pode solicitar a exclusão da conta pelo próprio app. Ao confirmar, sua sessão
-                é encerrada, seus dados de identificação são removidos ou anonimizados e dados que
-                precisem permanecer por obrigação legal, antifraude, pagamento ou segurança ficam
-                retidos apenas pelo prazo necessário informado no Aviso de Privacidade.
-              </p>
-              <p>
-                Para proteger a conta, digite <strong>EXCLUIR</strong> abaixo e toque no botão.
-              </p>
-              {isClientAccount ? (
-                <p>
-                  A exclusão só fica disponível quando não houver atendimento ativo ou pendência de
-                  segurança na conta.
-                </p>
-              ) : (
-                <p>
-                  A exclusão só fica disponível quando a carteira estiver zerada e não houver saque em
-                  processamento.
-                </p>
-              )}
-            </div>
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-              <input
-                value={deleteConfirmation}
-                onChange={(event) => setDeleteConfirmation(event.target.value)}
-                placeholder="Digite EXCLUIR"
-                className="min-w-0 flex-1 rounded-2xl border border-rose-200 bg-white px-4 py-3 text-sm font-semibold text-rose-900 outline-none transition focus:border-rose-400"
-              />
-              <button
-                type="button"
-                onClick={handleDeleteAccount}
-                disabled={isDeletingAccount}
-                className="inline-flex items-center justify-center gap-2 rounded-[22px] bg-rose-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:bg-rose-300"
-              >
-                <Trash2 className="h-4 w-4" />
-                {isDeletingAccount ? "Excluindo..." : "Excluir minha conta"}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={openDeleteAccountModal}
+              className="inline-flex items-center gap-2 rounded-[22px] border border-rose-200 bg-white px-5 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Excluir meus dados
+            </button>
           </div>
 
         </div>
@@ -796,35 +761,84 @@ export function ProfileAccount() {
             initial={{ opacity: 0, y: 18, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 18, scale: 0.98 }}
-            className="w-full max-w-sm rounded-[28px] bg-white p-6 shadow-[0_28px_80px_rgba(2,6,23,0.32)]"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[28px] bg-white p-6 shadow-[0_28px_80px_rgba(2,6,23,0.32)]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-account-confirmation-title"
           >
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-600">
-              Ação irreversível
-            </p>
-            <h2 id="delete-account-confirmation-title" className="mt-2 text-xl font-bold text-slate-900">
-              Deseja excluir sua conta?
-            </h2>
-            <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              Seus dados pessoais serão removidos ou anonimizados conforme o Aviso de Privacidade.
-              Depois de confirmar, esta ação não poderá ser desfeita.
-            </p>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-600">
+                  Exclusão dos dados
+                </p>
+                <h2 id="delete-account-confirmation-title" className="mt-2 text-xl font-bold text-slate-900">
+                  Excluir conta e dados pessoais
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeleteConfirmationOpen(false)}
+                disabled={isDeletingAccount}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-50"
+                aria-label="Fechar exclusão dos dados"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm leading-relaxed text-slate-600">
+              <p>
+                Ao confirmar, sua sessão será encerrada e seus dados de identificação serão removidos
+                ou anonimizados. Informações que precisem permanecer por obrigação legal, antifraude,
+                pagamento ou segurança serão mantidas somente pelo prazo necessário.
+              </p>
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 font-semibold text-rose-800">
+                O e-mail <strong>{user.email}</strong> será bloqueado permanentemente. E-mails de contas
+                excluídas, banidas ou suspensas jamais poderão criar outra conta Worko.
+              </div>
+              <p>
+                {isClientAccount
+                  ? "A exclusão só será concluída se não houver atendimento ativo ou pendência de segurança na conta."
+                  : "A exclusão só será concluída quando a carteira estiver zerada e não houver saque em processamento."}
+              </p>
+              <p>
+                Esta ação é irreversível. Para confirmar, digite <strong>EXCLUIR</strong>.
+              </p>
+            </div>
+
+            <input
+              value={deleteConfirmation}
+              onChange={(event) => {
+                setDeleteConfirmation(event.target.value);
+                if (statusTone === "error") setStatusMessage("");
+              }}
+              placeholder="Digite EXCLUIR"
+              autoComplete="off"
+              className="mt-5 w-full rounded-2xl border border-rose-200 bg-white px-4 py-3 text-sm font-semibold text-rose-900 outline-none transition focus:border-rose-400"
+            />
+
+            {statusTone === "error" && statusMessage ? (
+              <p className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+                {statusMessage}
+              </p>
+            ) : null}
+
             <div className="mt-6 grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setIsDeleteConfirmationOpen(false)}
+                disabled={isDeletingAccount}
                 className="h-12 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
-                Não
+                Voltar
               </button>
               <button
                 type="button"
                 onClick={() => void confirmDeleteAccount()}
-                className="h-12 rounded-2xl bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700"
+                disabled={isDeletingAccount}
+                className="h-12 rounded-2xl bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:bg-rose-300"
               >
-                Sim, excluir
+                {isDeletingAccount ? "Excluindo..." : "Excluir meus dados"}
               </button>
             </div>
           </motion.div>

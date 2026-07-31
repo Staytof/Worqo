@@ -53,6 +53,8 @@ const PUBLIC_REQUEST_MASK_OFFSET_VARIATION_METERS = 35;
 const REQUEST_DESCRIPTION_MAX_LENGTH = 50;
 const REQUEST_WORKER_DECLINE_BLOCK_MS = 1000 * 60 * 10;
 const SEARCHING_REQUEST_TTL_MS = 1000 * 60 * 60;
+const NO_SHOW_PROVIDER_RESPONSE_MS = 12 * 60 * 60 * 1000;
+const NO_SHOW_EVIDENCE_MAX_LENGTH = 900_000;
 
 const liveStatusPlaceholders = LIVE_REQUEST_STATUSES.map(() => "?").join(", ");
 const blockingStatusPlaceholders = BLOCKING_REQUEST_STATUSES.map(() => "?").join(", ");
@@ -121,7 +123,10 @@ const selectCompletedRequestsByRequester = db.prepare(
   `
     ${requestSelection}
     WHERE service_requests.requester_user_id = ?
-      AND service_requests.status = 'completed'
+      AND (
+        service_requests.status = 'completed'
+        OR service_requests.dispute_status = 'refunded'
+      )
     ORDER BY service_requests.updated_at DESC, service_requests.created_at DESC
     LIMIT 50
   `
@@ -243,7 +248,7 @@ const selectServiceChatsByUser = db.prepare(
       (service_chats.requester_user_id = ? AND service_chats.requester_archived_at IS NULL)
       OR (service_chats.worker_user_id = ? AND service_chats.worker_archived_at IS NULL)
     )
-      AND service_requests.status NOT IN ('completed', 'cancelled')
+      AND service_requests.status <> 'cancelled'
     ORDER BY service_chats.updated_at DESC
   `
 );
@@ -259,7 +264,7 @@ const selectServiceChatByIdForUser = db.prepare(
 
 const selectUserVerificationById = db.prepare(
   `
-    SELECT cpf_verified_at, cpf_digits
+    SELECT account_kind, cpf_verified_at, cpf_digits, provider_verification_status
     FROM users
     WHERE id = ?
     LIMIT 1
@@ -492,6 +497,31 @@ const touchAndUnarchiveServiceChatStatement = db.prepare(
   `
 );
 
+const lockServiceChatByRequestIdStatement = db.prepare(
+  `
+    UPDATE service_chats
+    SET
+      locked_at = ?,
+      reopened_at = NULL,
+      requester_archived_at = NULL,
+      worker_archived_at = NULL,
+      updated_at = ?
+    WHERE service_request_id = ?
+  `
+);
+
+const reopenServiceChatStatement = db.prepare(
+  `
+    UPDATE service_chats
+    SET
+      reopened_at = ?,
+      requester_archived_at = NULL,
+      worker_archived_at = NULL,
+      updated_at = ?
+    WHERE id = ?
+  `
+);
+
 const archiveRequesterServiceChatStatement = db.prepare(
   `
     UPDATE service_chats
@@ -586,15 +616,94 @@ const openServiceRequestDisputeStatement = db.prepare(
     UPDATE service_requests
     SET
       dispute_status = 'open',
+      dispute_kind = 'general',
       dispute_reason = ?,
       disputed_by_user_id = ?,
       disputed_at = ?,
       dispute_resolution = NULL,
       dispute_resolved_at = NULL,
       dispute_admin_note = NULL,
+      dispute_evidence_image = NULL,
+      dispute_provider_response = NULL,
+      dispute_provider_responded_at = NULL,
+      dispute_provider_acknowledged_no_show = 0,
+      dispute_response_due_at = NULL,
+      dispute_auto_refund_started_at = NULL,
       updated_at = ?
     WHERE id = ?
       AND dispute_status IS NULL
+  `
+);
+
+const openProviderNoShowClaimStatement = db.prepare(
+  `
+    UPDATE service_requests
+    SET
+      dispute_status = 'open',
+      dispute_kind = 'provider-no-show',
+      dispute_reason = ?,
+      disputed_by_user_id = ?,
+      disputed_at = ?,
+      dispute_resolution = NULL,
+      dispute_resolved_at = NULL,
+      dispute_admin_note = NULL,
+      dispute_evidence_image = ?,
+      dispute_provider_response = NULL,
+      dispute_provider_responded_at = NULL,
+      dispute_provider_acknowledged_no_show = 0,
+      dispute_response_due_at = ?,
+      dispute_auto_refund_started_at = NULL,
+      updated_at = ?
+    WHERE id = ?
+      AND dispute_status IS NULL
+  `
+);
+
+const respondProviderNoShowClaimStatement = db.prepare(
+  `
+    UPDATE service_requests
+    SET
+      dispute_provider_response = ?,
+      dispute_provider_responded_at = ?,
+      dispute_provider_acknowledged_no_show = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND dispute_status = 'open'
+      AND dispute_kind = 'provider-no-show'
+      AND dispute_provider_responded_at IS NULL
+  `
+);
+
+const claimDisputeRefundProcessingStatement = db.prepare(
+  `
+    UPDATE service_requests
+    SET dispute_auto_refund_started_at = ?, updated_at = ?
+    WHERE id = ?
+      AND dispute_status = 'open'
+      AND dispute_auto_refund_started_at IS NULL
+  `
+);
+
+const clearDisputeRefundProcessingStatement = db.prepare(
+  `
+    UPDATE service_requests
+    SET dispute_auto_refund_started_at = NULL, updated_at = ?
+    WHERE id = ?
+      AND dispute_status = 'open'
+  `
+);
+
+const selectExpiredUnansweredNoShowClaimsStatement = db.prepare(
+  `
+    ${requestSelection}
+    WHERE service_requests.dispute_status = 'open'
+      AND service_requests.dispute_kind = 'provider-no-show'
+      AND service_requests.dispute_provider_responded_at IS NULL
+      AND service_requests.dispute_response_due_at IS NOT NULL
+      AND service_requests.dispute_response_due_at <= ?
+      AND service_requests.dispute_auto_refund_started_at IS NULL
+    ORDER BY service_requests.dispute_response_due_at ASC
+    LIMIT 20
   `
 );
 
@@ -723,14 +832,22 @@ function ensureRequesterCanCreateServiceRequest(user) {
   }
 }
 
-function isUserCpfVerified(userId) {
+function isUserApprovedProvider(userId) {
   const row = selectUserVerificationById.get(userId);
-  return Boolean(row?.cpf_verified_at && row?.cpf_digits);
+  return Boolean(
+    row?.account_kind === "provider" &&
+      row?.provider_verification_status === "approved" &&
+      row?.cpf_verified_at &&
+      row?.cpf_digits
+  );
 }
 
 function ensureWorkerCanTakeServiceRequest(userId) {
-  if (!isUserCpfVerified(userId)) {
-    throw new HttpError(403, "Para ver e pegar serviços, confirme seu CPF no perfil.");
+  if (!isUserApprovedProvider(userId)) {
+    throw new HttpError(
+      403,
+      "Seu cadastro de prestador(a) precisa ser aprovado antes de acessar ou pegar serviços."
+    );
   }
 }
 
@@ -801,6 +918,58 @@ function ensureServiceDate(value) {
     throw new HttpError(400, "Informe uma data válida para o serviço.");
   }
 
+  const saoPauloDateParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const datePart = (type) =>
+    saoPauloDateParts.find((part) => part.type === type)?.value ?? "";
+  const currentDateIso = `${datePart("year")}-${datePart("month")}-${datePart("day")}`;
+
+  if (normalizedValue < currentDateIso) {
+    throw new HttpError(400, "Escolha a data de hoje ou uma data futura para o serviço.");
+  }
+
+  return normalizedValue;
+}
+
+function getNoShowEligibleAtFromDetails(details) {
+  if (!details?.serviceDate || !details?.schedule) {
+    return null;
+  }
+
+  const scheduledAt = new Date(
+    `${details.serviceDate}T${details.schedule}:00-03:00`
+  ).getTime();
+
+  if (!Number.isFinite(scheduledAt)) {
+    return null;
+  }
+
+  const toleranceMinutes = Math.max(
+    0,
+    Math.min(240, Number(details.delayToleranceMinutes) || 0)
+  );
+
+  return new Date(scheduledAt + toleranceMinutes * 60_000).toISOString();
+}
+
+function ensureNoShowEvidenceImage(value) {
+  const normalizedValue = typeof value === "string" ? value.trim() : "";
+
+  if (!normalizedValue) {
+    return null;
+  }
+
+  if (
+    normalizedValue.length > NO_SHOW_EVIDENCE_MAX_LENGTH ||
+    !/^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=\s]+$/i.test(normalizedValue)
+  ) {
+    throw new HttpError(400, "Envie uma foto válida de até 700 KB como evidência.");
+  }
+
   return normalizedValue;
 }
 
@@ -865,6 +1034,12 @@ function ensureDelayToleranceMinutes(value) {
 function ensureServiceDetails(payload) {
   const title = String(payload?.title ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
   const price = normalizeServicePrice(payload?.price);
+  const priceCents = Number(String(payload?.price ?? "").replace(/\D/g, ""));
+
+  if (!Number.isFinite(priceCents) || priceCents < 5_000) {
+    throw new HttpError(400, "O valor mínimo aceito para um serviço é R$ 50,00.");
+  }
+
   const serviceDate = ensureServiceDate(payload?.serviceDate);
   const schedule = ensureSchedule(payload?.schedule);
   const delayToleranceMinutes = ensureDelayToleranceMinutes(payload?.delayToleranceMinutes);
@@ -1087,9 +1262,15 @@ function mapServiceDispute(row) {
   return {
     status:
       status === "open" || status === "resolved" || status === "refunded" ? status : null,
+    kind: row.dispute_kind === "provider-no-show" ? "provider-no-show" : "general",
     reason: row.dispute_reason ?? "",
     openedAt: row.disputed_at ?? null,
     openedByUserId: row.disputed_by_user_id ?? null,
+    evidenceImage: row.dispute_evidence_image ?? null,
+    providerResponse: row.dispute_provider_response ?? null,
+    providerRespondedAt: row.dispute_provider_responded_at ?? null,
+    providerAcknowledgedNoShow: Boolean(row.dispute_provider_acknowledged_no_show),
+    responseDueAt: row.dispute_response_due_at ?? null,
     resolution: row.dispute_resolution ?? null,
     resolvedAt: row.dispute_resolved_at ?? null,
     adminNote: row.dispute_admin_note ?? null,
@@ -1166,6 +1347,10 @@ function mapActiveServiceRequest(row, currentUserRole) {
 
   const exactLocationVisible = shouldRevealExactServiceLocation(currentUserRole, row.status);
   const maskedLocation = buildMaskedRequestLocation(row.id, row.latitude, row.longitude);
+  const details = parseServiceDetails(row.service_details_json);
+  const timeline = listServiceRequestTimeline(row.id);
+  const noShowEligibleAt = getNoShowEligibleAtFromDetails(details);
+  const workerArrivalRegistered = timeline.some((event) => event.kind === "worker-arrived");
 
   return {
     id: row.id,
@@ -1204,9 +1389,18 @@ function mapActiveServiceRequest(row, currentUserRole) {
           }
         : null,
     dispute: mapServiceDispute(row),
-    timeline: listServiceRequestTimeline(row.id),
+    noShowEligibleAt,
+    canReportNoShow: Boolean(
+      currentUserRole === "requester" &&
+        row.status === "confirmed" &&
+        !row.dispute_status &&
+        !workerArrivalRegistered &&
+        noShowEligibleAt &&
+        Date.now() >= new Date(noShowEligibleAt).getTime()
+    ),
+    timeline,
     details: maskServiceDetailsForViewer(
-      parseServiceDetails(row.service_details_json),
+      details,
       currentUserRole,
       row.status
     ),
@@ -1310,6 +1504,8 @@ function mapServiceChat(row, currentUserId) {
     serviceRequestId: row.service_request_id,
     serviceType: row.service_category,
     servicePreview: row.service_description,
+    serviceStatus: row.service_status ?? null,
+    isLocked: Boolean(row.locked_at && (!row.reopened_at || row.reopened_at < row.locked_at)),
   };
 }
 
@@ -1443,7 +1639,7 @@ function getServiceChatForUser(userId, chatId) {
 }
 
 export function listPublicServiceRequests(viewerUserId) {
-  if (!isUserCpfVerified(viewerUserId)) {
+  if (!isUserApprovedProvider(viewerUserId)) {
     return [];
   }
 
@@ -1947,6 +2143,13 @@ export function markServiceRequestWorkerArrivedForUser(userId, requestId) {
     throw new HttpError(409, "Não existe um(a) prestador(a) vinculado(a) a este atendimento.");
   }
 
+  if (String(request.dispute_status ?? "").trim().toLowerCase() === "open") {
+    throw new HttpError(
+      409,
+      "Existe uma solicitação em análise. A chegada não pode ser alterada durante a disputa."
+    );
+  }
+
   if (hasServiceRequestEvent(requestId, "worker-arrived")) {
     return {
       ok: true,
@@ -2022,6 +2225,13 @@ export function sendServiceChatMessageForUser(userId, chatId, payload) {
     throw new HttpError(404, "Conversa não encontrada.");
   }
 
+  if (chatRow.locked_at && (!chatRow.reopened_at || chatRow.reopened_at < chatRow.locked_at)) {
+    throw new HttpError(
+      409,
+      "Este chat foi bloqueado após a conclusão do serviço. Entre em contato novamente para continuar."
+    );
+  }
+
   const senderIsRequester = chatRow.requester_user_id === userId;
   const messagePayload = ensureChatMessagePayload(payload, {
     allowImage: senderIsRequester,
@@ -2060,6 +2270,69 @@ export function sendServiceChatMessageForUser(userId, chatId, payload) {
       chatId,
     }
   );
+
+  return getServiceChatForUser(userId, chatId);
+}
+
+export function reopenServiceChatForUser(userId, chatId) {
+  const chatRow = selectServiceChatByIdForUser.get(chatId, userId, userId);
+
+  if (!chatRow) {
+    throw new HttpError(404, "Conversa não encontrada.");
+  }
+
+  if (chatRow.service_status !== "completed") {
+    throw new HttpError(409, "Este chat não precisa ser reaberto.");
+  }
+
+  const isLocked = Boolean(
+    chatRow.locked_at && (!chatRow.reopened_at || chatRow.reopened_at < chatRow.locked_at)
+  );
+
+  if (!isLocked) {
+    return getServiceChatForUser(userId, chatId);
+  }
+
+  const timestamp = nowIso();
+  const senderIsRequester = chatRow.requester_user_id === userId;
+  const recipientUserId = senderIsRequester
+    ? chatRow.worker_user_id
+    : chatRow.requester_user_id;
+  const senderName = senderIsRequester
+    ? chatRow.requester_name
+    : chatRow.worker_name;
+  const senderAvatar = senderIsRequester
+    ? chatRow.requester_avatar
+    : chatRow.worker_avatar;
+
+  db.exec("BEGIN");
+
+  try {
+    reopenServiceChatStatement.run(timestamp, timestamp, chatId);
+    insertServiceChatMessageStatement.run(
+      createId(),
+      chatId,
+      userId,
+      "Quero entrar em contato novamente.",
+      "text",
+      null,
+      timestamp
+    );
+    createUserNotification(
+      recipientUserId,
+      "chat-message",
+      `${getNotificationFirstName(senderName)} quer conversar novamente.`,
+      {
+        title: getNotificationFirstName(senderName),
+        avatar: senderAvatar ?? null,
+        chatId,
+      }
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 
   return getServiceChatForUser(userId, chatId);
 }
@@ -2194,17 +2467,20 @@ export async function releaseServiceRequestPaymentForUser(userId, requestId, pay
       .prepare(
         `
           UPDATE service_requests
-          SET status = 'completed', updated_at = ?
+          SET
+            status = 'completed',
+            wallet_available_at = COALESCE(wallet_available_at, ?),
+            updated_at = ?
           WHERE id = ? AND requester_user_id = ? AND status = 'confirmed'
         `
       )
-      .run(timestamp, requestId, userId);
+      .run(timestamp, timestamp, requestId, userId);
 
     if (result.changes === 0) {
       throw new HttpError(409, "Não foi possível liberar este pagamento agora.");
     }
 
-    deleteServiceChatByRequestIdStatement.run(requestId);
+    lockServiceChatByRequestIdStatement.run(timestamp, timestamp, requestId);
 
     createServiceRequestEvent(requestId, {
       actorUserId: userId,
@@ -2351,6 +2627,296 @@ export function openServiceRequestDisputeForUser(userId, requestId, payload) {
   return getActiveServiceRequestForUser(userId);
 }
 
+export function openProviderNoShowClaimForRequester(userId, requestId, payload) {
+  const request = getServiceRequestForUpdate(requestId);
+
+  if (request.requester_user_id !== userId) {
+    throw new HttpError(403, "Somente o cliente deste atendimento pode solicitar ressarcimento por ausência.");
+  }
+
+  if (request.status !== "confirmed") {
+    throw new HttpError(409, "O ressarcimento por ausência só fica disponível em um atendimento pago e confirmado.");
+  }
+
+  if (!request.worker_user_id) {
+    throw new HttpError(409, "Este atendimento não possui prestador vinculado.");
+  }
+
+  if (request.dispute_status) {
+    throw new HttpError(409, "Já existe uma disputa registrada neste atendimento.");
+  }
+
+  if (hasServiceRequestEvent(requestId, "worker-arrived")) {
+    throw new HttpError(409, "A chegada do prestador já foi confirmada neste atendimento.");
+  }
+
+  const details = parseServiceDetails(request.service_details_json);
+  const noShowEligibleAt = getNoShowEligibleAtFromDetails(details);
+
+  if (!noShowEligibleAt) {
+    throw new HttpError(409, "Não encontramos data e horário válidos para verificar a ausência.");
+  }
+
+  if (Date.now() < new Date(noShowEligibleAt).getTime()) {
+    throw new HttpError(
+      409,
+      "Aguarde o horário combinado e toda a tolerância de atraso antes de solicitar o ressarcimento."
+    );
+  }
+
+  const reason = ensureDisputeReason(payload?.reason);
+  const evidenceImage = ensureNoShowEvidenceImage(payload?.evidenceImage);
+  const timestamp = nowIso();
+  const responseDueAt = new Date(Date.now() + NO_SHOW_PROVIDER_RESPONSE_MS).toISOString();
+  const result = openProviderNoShowClaimStatement.run(
+    reason,
+    userId,
+    timestamp,
+    evidenceImage,
+    responseDueAt,
+    timestamp,
+    requestId
+  );
+
+  if (result.changes === 0) {
+    throw new HttpError(409, "Não foi possível registrar o pedido de ressarcimento agora.");
+  }
+
+  createServiceRequestEvent(requestId, {
+    actorUserId: userId,
+    actorRole: "requester",
+    kind: "provider-no-show-reported",
+    title: "Ausência do prestador informada",
+    description: "O cliente solicitou ressarcimento integral porque o prestador não compareceu.",
+    meta: {
+      noShowEligibleAt,
+      responseDueAt,
+      hasEvidenceImage: Boolean(evidenceImage),
+      workerArrivalRegistered: false,
+    },
+  });
+
+  createUserNotification(
+    request.worker_user_id,
+    "dispute-opened",
+    "O cliente informou que você não compareceu. Responda pelo atendimento em até 12 horas.",
+    {
+      title: "Ressarcimento solicitado",
+      path: "/app?focus=request",
+      avatar: request.requester_avatar ?? null,
+    }
+  );
+
+  createUserNotification(
+    request.requester_user_id,
+    "dispute-opened",
+    "Seu pedido de ressarcimento integral foi registrado e o pagamento está bloqueado.",
+    {
+      title: "Pagamento protegido",
+      path: "/app/orders",
+    }
+  );
+
+  return getActiveServiceRequestForUser(userId);
+}
+
+async function finalizeOpenDisputeWithFullRefund(
+  requestId,
+  { actorUserId = null, actorRole = "system", adminNote = "", eventDescription = "" } = {}
+) {
+  const request = getServiceRequestForUpdate(requestId);
+
+  if (String(request.dispute_status ?? "").trim().toLowerCase() !== "open") {
+    throw new HttpError(409, "Este atendimento não possui disputa aberta.");
+  }
+
+  if (request.worker_withdrawal_id) {
+    throw new HttpError(
+      409,
+      "O saque deste atendimento já foi iniciado. Finalize manualmente fora do fluxo automático."
+    );
+  }
+
+  const timestamp = nowIso();
+  const claim = claimDisputeRefundProcessingStatement.run(timestamp, timestamp, requestId);
+
+  if (claim.changes === 0) {
+    throw new HttpError(409, "Este reembolso já está sendo processado.");
+  }
+
+  try {
+    await refundAsaasPaymentForServiceRequest(requestId);
+  } catch (error) {
+    clearDisputeRefundProcessingStatement.run(nowIso(), requestId);
+    throw error;
+  }
+
+  const refundAmountCents = Number(request.payment_amount_total_cents) || 0;
+  const result = resolveServiceRequestDisputeStatement.run(
+    "refunded",
+    "refund",
+    timestamp,
+    adminNote,
+    "DONE",
+    refundAmountCents,
+    timestamp,
+    "cancelled",
+    timestamp,
+    requestId
+  );
+
+  if (result.changes === 0) {
+    throw new HttpError(409, "O Pix foi estornado, mas não foi possível finalizar o registro interno.");
+  }
+
+  deleteServiceChatByRequestIdStatement.run(requestId);
+
+  createServiceRequestEvent(requestId, {
+    actorUserId,
+    actorRole,
+    kind: "dispute-resolved",
+    title: "Ressarcimento integral aprovado",
+    description:
+      eventDescription ||
+      "O valor do serviço e todas as taxas pagas pelo cliente foram enviados para estorno.",
+    meta: { refundAmountCents, refundType: "full" },
+  });
+
+  createUserNotification(
+    request.requester_user_id,
+    "dispute-resolved",
+    "Seu ressarcimento integral foi aprovado. O valor total pago está sendo devolvido pelo Asaas.",
+    {
+      title: "Ressarcimento aprovado",
+      path: "/app/orders",
+    }
+  );
+
+  if (request.worker_user_id) {
+    createUserNotification(
+      request.worker_user_id,
+      "dispute-resolved",
+      "O atendimento foi encerrado com ressarcimento integral ao cliente.",
+      {
+        title: "Atendimento encerrado",
+        path: "/app",
+      }
+    );
+  }
+
+  return { ok: true, request: null, refundAmountCents };
+}
+
+export async function respondProviderNoShowClaimForWorker(userId, requestId, payload) {
+  const request = getServiceRequestForUpdate(requestId);
+
+  if (request.worker_user_id !== userId) {
+    throw new HttpError(403, "Somente o prestador deste atendimento pode responder à solicitação.");
+  }
+
+  if (
+    request.dispute_status !== "open" ||
+    request.dispute_kind !== "provider-no-show"
+  ) {
+    throw new HttpError(409, "Este atendimento não possui uma solicitação de ressarcimento por ausência.");
+  }
+
+  if (request.dispute_provider_responded_at) {
+    throw new HttpError(409, "Sua resposta já foi registrada.");
+  }
+
+  if (
+    request.dispute_response_due_at &&
+    Date.now() > new Date(request.dispute_response_due_at).getTime()
+  ) {
+    return finalizeOpenDisputeWithFullRefund(requestId, {
+      actorRole: "system",
+      adminNote: "Ressarcimento automático: o prazo de resposta do prestador terminou.",
+      eventDescription:
+        "A resposta foi enviada depois do prazo de 12 horas e o ressarcimento integral foi iniciado.",
+    });
+  }
+
+  const acknowledgesNoShow = Boolean(payload?.acknowledgesNoShow);
+  const response = acknowledgesNoShow
+    ? String(payload?.response ?? "Confirmo que não compareci ao atendimento.")
+        .trim()
+        .slice(0, 500)
+    : ensureDisputeReason(payload?.response);
+  const timestamp = nowIso();
+  const result = respondProviderNoShowClaimStatement.run(
+    response,
+    timestamp,
+    acknowledgesNoShow ? 1 : 0,
+    timestamp,
+    requestId
+  );
+
+  if (result.changes === 0) {
+    throw new HttpError(409, "Não foi possível registrar sua resposta agora.");
+  }
+
+  createServiceRequestEvent(requestId, {
+    actorUserId: userId,
+    actorRole: "worker",
+    kind: "provider-no-show-response",
+    title: acknowledgesNoShow ? "Ausência confirmada" : "Prestador contestou a ausência",
+    description: response,
+    meta: { acknowledgesNoShow },
+  });
+
+  createUserNotification(
+    request.requester_user_id,
+    "dispute-opened",
+    acknowledgesNoShow
+      ? "O prestador confirmou a ausência. Seu ressarcimento integral será processado automaticamente."
+      : "O prestador respondeu à solicitação. A administração analisará o caso.",
+    {
+      title: acknowledgesNoShow ? "Ausência confirmada" : "Resposta do prestador",
+      path: "/app/orders",
+    }
+  );
+
+  if (acknowledgesNoShow) {
+    return finalizeOpenDisputeWithFullRefund(requestId, {
+      actorUserId: userId,
+      actorRole: "system",
+      adminNote: "Ressarcimento automático: o prestador confirmou que não compareceu.",
+      eventDescription:
+        "O prestador confirmou a ausência e o Worko iniciou automaticamente o ressarcimento integral.",
+    });
+  }
+
+  return { ok: true, request: getActiveServiceRequestForUser(userId) };
+}
+
+export async function processExpiredProviderNoShowClaims() {
+  const expiredClaims = selectExpiredUnansweredNoShowClaimsStatement.all(nowIso());
+  const results = [];
+
+  for (const claim of expiredClaims) {
+    if (hasServiceRequestEvent(claim.id, "worker-arrived")) {
+      results.push({ requestId: claim.id, status: "requires-admin-review" });
+      continue;
+    }
+
+    try {
+      await finalizeOpenDisputeWithFullRefund(claim.id, {
+        actorRole: "system",
+        adminNote: "Ressarcimento automático: o prestador não respondeu em 12 horas.",
+        eventDescription:
+          "O prazo de resposta do prestador terminou e o Worko iniciou o ressarcimento integral.",
+      });
+      results.push({ requestId: claim.id, status: "refunded" });
+    } catch (error) {
+      console.error(`Falha ao processar ressarcimento automático do pedido ${claim.id}.`, error);
+      results.push({ requestId: claim.id, status: "failed" });
+    }
+  }
+
+  return results;
+}
+
 export async function resolveServiceRequestDisputeForAdmin(adminUserId, requestId, payload) {
   const request = getServiceRequestForUpdate(requestId);
   const disputeStatus = String(request.dispute_status ?? "").trim().toLowerCase();
@@ -2362,56 +2928,14 @@ export async function resolveServiceRequestDisputeForAdmin(adminUserId, requestI
   const action = ensureDisputeResolutionAction(payload?.action);
   const adminNote = String(payload?.adminNote ?? "").trim().slice(0, 400);
   const timestamp = nowIso();
-  const refundAmountCents = Number(request.payment_amount_total_cents) || 0;
 
   if (action === "refund") {
-    if (request.worker_withdrawal_id) {
-      throw new HttpError(
-        409,
-        "O saque deste atendimento já foi iniciado. Finalize manualmente fora do fluxo automático."
-      );
-    }
-
-    await refundAsaasPaymentForServiceRequest(requestId);
-
-    resolveServiceRequestDisputeStatement.run(
-      "refunded",
-      "refund",
-      timestamp,
-      adminNote,
-      "DONE",
-      refundAmountCents,
-      timestamp,
-      "cancelled",
-      timestamp,
-      requestId
-    );
-
-    deleteServiceChatByRequestIdStatement.run(requestId);
-
-    createServiceRequestEvent(requestId, {
+    return finalizeOpenDisputeWithFullRefund(requestId, {
       actorUserId: adminUserId,
       actorRole: "admin",
-      kind: "dispute-resolved",
-      title: "Disputa resolvida com reembolso",
-      description: adminNote || "O admin aprovou o reembolso integral deste atendimento.",
+      adminNote,
+      eventDescription: adminNote || "O admin aprovou o ressarcimento integral deste atendimento.",
     });
-
-    createUserNotification(
-      request.requester_user_id,
-      "dispute-resolved",
-      "Sua disputa foi aprovada e o reembolso do atendimento foi iniciado."
-    );
-
-    if (request.worker_user_id) {
-      createUserNotification(
-        request.worker_user_id,
-        "dispute-resolved",
-        "O atendimento foi encerrado pelo admin com reembolso para a cliente."
-      );
-    }
-
-    return { ok: true, request: null };
   }
 
   const result = resolveServiceRequestDisputeStatement.run(

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   AlertTriangle,
   ArrowRight,
   Banknote,
   CalendarDays,
+  Camera,
   CheckCircle2,
   ClipboardList,
   Clock3,
@@ -19,8 +20,15 @@ import { Navigate, useNavigate } from "react-router";
 import { apiRequest } from "../api/client";
 import { useApp } from "../context/AppContext";
 import { useErrorToast } from "../hooks/useErrorToast";
+import { requestNativeCameraPermission } from "../lib/nativeMediaPermissions";
 import type { ActiveServiceRequest, PublicUserProfile, ServiceReviewPayload } from "../types";
-import { formatCurrencyAmount, formatDelayTolerance, formatServiceDate, getInitials } from "../utils/helpers";
+import {
+  formatCurrencyAmount,
+  formatDelayTolerance,
+  formatServiceDate,
+  getInitials,
+  readImageAsOptimizedDataUrl,
+} from "../utils/helpers";
 import { ServiceTimeline } from "./service/ServiceTimeline";
 import { VerifiedBadge } from "./ui/verified-badge";
 
@@ -107,6 +115,7 @@ export function ClientOrders() {
     deleteActiveServiceRequest,
     openChat,
     openServiceDispute,
+    reportProviderNoShow,
     markWorkerArrived,
     releaseServicePayment,
     listCompletedServiceRequests,
@@ -125,6 +134,12 @@ export function ClientOrders() {
   const [isDisputeOpen, setIsDisputeOpen] = useState(false);
   const [disputeReason, setDisputeReason] = useState("");
   const [isOpeningDispute, setIsOpeningDispute] = useState(false);
+  const noShowEvidenceInputRef = useRef<HTMLInputElement | null>(null);
+  const [isNoShowOpen, setIsNoShowOpen] = useState(false);
+  const [noShowReason, setNoShowReason] = useState("");
+  const [noShowEvidenceImage, setNoShowEvidenceImage] = useState<string | null>(null);
+  const [isReportingNoShow, setIsReportingNoShow] = useState(false);
+  const [currentTimestamp, setCurrentTimestamp] = useState(() => Date.now());
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [completedRequests, setCompletedRequests] = useState<ActiveServiceRequest[]>([]);
@@ -143,6 +158,21 @@ export function ClientOrders() {
     [request?.timeline]
   );
   const hasWorkerArrived = request ? hasWorkerArrivalEvent(request) : false;
+  const noShowEligibleTimestamp = request?.noShowEligibleAt
+    ? new Date(request.noShowEligibleAt).getTime()
+    : Number.NaN;
+  const canReportNoShow = Boolean(
+    request?.status === "confirmed" &&
+      !request.dispute?.status &&
+      !hasWorkerArrived &&
+      Number.isFinite(noShowEligibleTimestamp) &&
+      currentTimestamp >= noShowEligibleTimestamp
+  );
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTimestamp(Date.now()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (!request?.workerId || !sessionToken) {
@@ -319,6 +349,62 @@ export function ClientOrders() {
 
     setDisputeReason("");
     setIsDisputeOpen(false);
+  };
+
+  const handleNoShowEvidence = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const image = await readImageAsOptimizedDataUrl(file, {
+        maxDimension: 960,
+        quality: 0.72,
+      });
+      setNoShowEvidenceImage(image);
+      setError("");
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Não conseguimos anexar a foto."
+      );
+    }
+  };
+
+  const handleOpenNoShowEvidencePicker = async () => {
+    const allowed = await requestNativeCameraPermission();
+
+    if (!allowed) {
+      setError("Ative a permissão da câmera para anexar uma foto.");
+      return;
+    }
+
+    noShowEvidenceInputRef.current?.click();
+  };
+
+  const handleReportNoShow = async () => {
+    if (noShowReason.trim().length < 12) {
+      setError("Explique o que aconteceu em pelo menos 12 caracteres.");
+      return;
+    }
+
+    setError("");
+    setIsReportingNoShow(true);
+    const result = await reportProviderNoShow({
+      reason: noShowReason.trim(),
+      evidenceImage: noShowEvidenceImage,
+    });
+    setIsReportingNoShow(false);
+
+    if (!result.ok) {
+      setError(result.error ?? "Não conseguimos solicitar o ressarcimento agora.");
+      return;
+    }
+
+    setNoShowReason("");
+    setNoShowEvidenceImage(null);
+    setIsNoShowOpen(false);
   };
 
   const handleOpenHistory = async () => {
@@ -544,11 +630,46 @@ export function ClientOrders() {
               <section className="rounded-[28px] bg-red-50 p-4 text-red-800">
                 <div className="flex gap-3">
                   <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
-                  <div>
-                    <h2 className="text-base font-black">Disputa em análise</h2>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base font-black">
+                      {request.dispute.kind === "provider-no-show"
+                        ? "Ressarcimento em análise"
+                        : "Disputa em análise"}
+                    </h2>
                     <p className="mt-1 text-sm font-semibold leading-relaxed">
                       {request.dispute.reason || "O suporte acompanha este atendimento."}
                     </p>
+                    {request.dispute.evidenceImage ? (
+                      <img
+                        src={request.dispute.evidenceImage}
+                        alt="Evidência enviada"
+                        className="mt-3 max-h-48 w-full rounded-2xl object-cover"
+                      />
+                    ) : null}
+                    {request.dispute.providerResponse ? (
+                      <div className="mt-3 rounded-2xl bg-white px-3 py-3 text-sm">
+                        <strong className="block text-xs uppercase tracking-wider text-red-600">
+                          Resposta do prestador
+                        </strong>
+                        <p className="mt-1 font-semibold leading-relaxed">
+                          {request.dispute.providerResponse}
+                        </p>
+                      </div>
+                    ) : null}
+                    {request.dispute.kind === "provider-no-show" &&
+                    request.dispute.responseDueAt &&
+                    !request.dispute.providerRespondedAt ? (
+                      <p className="mt-3 text-xs font-bold leading-relaxed">
+                        O prestador pode responder até{" "}
+                        {new Intl.DateTimeFormat("pt-BR", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }).format(new Date(request.dispute.responseDueAt))}. Se não responder, o
+                        ressarcimento integral será processado automaticamente.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </section>
@@ -575,13 +696,24 @@ export function ClientOrders() {
                     <button
                       type="button"
                       onClick={() => void handleMarkWorkerArrived()}
-                      disabled={isMarkingArrival}
+                      disabled={isMarkingArrival || request.dispute?.status === "open"}
                       className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 text-sm font-black text-white transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
                     >
                       <CheckCircle2 className="h-4 w-4" />
                       {isMarkingArrival ? "Registrando..." : "O(a) prestador(a) chegou?"}
                     </button>
                   )}
+
+                  {canReportNoShow ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsNoShowOpen(true)}
+                      className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-rose-600 px-3 text-sm font-black text-white transition active:scale-[0.98]"
+                    >
+                      <ShieldAlert className="h-4 w-4" />
+                      Prestador não compareceu
+                    </button>
+                  ) : null}
 
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -603,7 +735,7 @@ export function ClientOrders() {
 
                         setIsReviewOpen(true);
                       }}
-                      disabled={!hasWorkerArrived}
+                      disabled={!hasWorkerArrived || request.dispute?.status === "open"}
                       className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 text-sm font-black text-white transition active:scale-[0.98] disabled:bg-slate-200 disabled:text-slate-400"
                     >
                       <CheckCircle2 className="h-4 w-4" />
@@ -658,7 +790,7 @@ export function ClientOrders() {
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-blue-600">
                   Histórico
                 </p>
-                <h2 className="mt-1 text-xl font-black text-slate-950">Pedidos concluídos</h2>
+                <h2 className="mt-1 text-xl font-black text-slate-950">Histórico de pedidos</h2>
               </div>
               <button
                 type="button"
@@ -690,8 +822,16 @@ export function ClientOrders() {
                             {completedRequest.workerName || "Prestador(a)"} • {formatPaymentAmount(completedRequest)}
                           </p>
                         </div>
-                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-700">
-                          Concluído
+                        <span
+                          className={`rounded-full px-3 py-1 text-[11px] font-black ${
+                            completedRequest.dispute?.status === "refunded"
+                              ? "bg-blue-50 text-blue-700"
+                              : "bg-emerald-50 text-emerald-700"
+                          }`}
+                        >
+                          {completedRequest.dispute?.status === "refunded"
+                            ? "Reembolsado"
+                            : "Concluído"}
                         </span>
                       </div>
 
@@ -728,10 +868,97 @@ export function ClientOrders() {
                 </div>
               ) : (
                 <div className="rounded-3xl bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-500">
-                  Nenhum pedido concluído ainda.
+                  Nenhum pedido encerrado ainda.
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isNoShowOpen ? (
+        <div className="fixed inset-0 z-[92] flex items-end justify-center bg-slate-950/45 px-4 py-5 backdrop-blur-[2px] sm:items-center">
+          <div className="max-h-[88dvh] w-full max-w-sm overflow-y-auto rounded-[28px] bg-white p-5 text-neutral-950 shadow-[0_18px_55px_rgba(15,23,42,0.20)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-rose-600">
+                  Proteção do cliente
+                </p>
+                <h2 className="mt-1 text-xl font-black text-slate-950">
+                  Prestador não compareceu
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNoShowOpen(false)}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="mt-4 text-sm font-semibold leading-relaxed text-slate-600">
+              Ao enviar, o pagamento continuará bloqueado. O prestador terá 12 horas para
+              responder e a administração poderá analisar o chat, o horário e os registros de
+              chegada.
+            </p>
+
+            <textarea
+              value={noShowReason}
+              onChange={(event) => setNoShowReason(event.target.value.slice(0, 320))}
+              rows={4}
+              placeholder="Explique há quanto tempo está aguardando e se tentou contato pelo chat."
+              className="mt-4 w-full resize-none rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-rose-200"
+            />
+
+            <input
+              ref={noShowEvidenceInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              className="hidden"
+              onChange={(event) => void handleNoShowEvidence(event)}
+            />
+
+            {noShowEvidenceImage ? (
+              <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                <img
+                  src={noShowEvidenceImage}
+                  alt="Evidência selecionada"
+                  className="max-h-48 w-full object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => setNoShowEvidenceImage(null)}
+                  className="w-full py-2 text-xs font-black text-rose-700"
+                >
+                  Remover foto
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleOpenNoShowEvidencePicker()}
+                className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 text-xs font-black text-slate-700"
+              >
+                <Camera className="h-4 w-4 text-blue-600" />
+                Anexar foto opcional
+              </button>
+            )}
+
+            <div className="mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-xs font-bold leading-relaxed text-emerald-800">
+              Quando aprovado, o ressarcimento devolve o valor do serviço, a taxa do app e a taxa
+              de intermediação. O Worko não fica com nenhuma taxa.
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void handleReportNoShow()}
+              disabled={isReportingNoShow}
+              className="mt-4 flex h-12 w-full items-center justify-center rounded-2xl bg-rose-600 text-sm font-black text-white disabled:opacity-60"
+            >
+              {isReportingNoShow ? "Enviando..." : "Solicitar ressarcimento integral"}
+            </button>
           </div>
         </div>
       ) : null}

@@ -145,6 +145,14 @@ export function ProfileSetup() {
     return <Navigate to="/app" replace />;
   }
 
+  if (authReady && onboardingStep === "provider-verification") {
+    return <Navigate to="/provider-verification" replace />;
+  }
+
+  if (authReady && onboardingStep === "provider-review") {
+    return <Navigate to="/provider-review" replace />;
+  }
+
   if (authReady && onboardingStep !== "profile-setup") {
     return <Navigate to="/register" replace />;
   }
@@ -278,7 +286,7 @@ export function ProfileSetup() {
       return;
     }
 
-    navigate("/app");
+    navigate("/provider-verification");
   };
 
   return (

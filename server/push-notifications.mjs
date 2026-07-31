@@ -5,7 +5,7 @@ import { config } from "./config.mjs";
 import { createId, nowIso } from "./security.mjs";
 
 const FCM_AUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
-const FCM_CHANNEL_ID = "worqo-general-v2";
+const FCM_CHANNEL_ID = "worqo-general-v3-sound";
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60_000;
 const TRANSIENT_RETRY_DELAYS_MS = [750, 2_000];
 const METADATA_TOKEN_ENDPOINT =
@@ -486,6 +486,16 @@ export function buildPushMessagePayload(token, notification) {
           default_vibrate_timings: true,
           notification_priority: "PRIORITY_HIGH",
           ...(remoteImage ? { image: remoteImage } : {}),
+        },
+      },
+      apns: {
+        headers: {
+          "apns-priority": "10",
+        },
+        payload: {
+          aps: {
+            sound: "default",
+          },
         },
       },
     },

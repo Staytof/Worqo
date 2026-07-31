@@ -11,6 +11,7 @@ import {
   CheckCheck,
   Flag,
   Handshake,
+  LockKeyhole,
   MessageCircle,
   Search,
   SendHorizontal,
@@ -231,6 +232,7 @@ export function ChatList() {
     deleteActiveServiceRequest,
     declineContactRequest,
     openChat,
+    reopenChat,
     removeChatThread,
     reportChatConduct,
     sendMessage,
@@ -254,6 +256,7 @@ export function ChatList() {
   const [isConfirmingDetails, setIsConfirmingDetails] = useState(false);
   const [isDeletingService, setIsDeletingService] = useState(false);
   const [isStartingService, setIsStartingService] = useState(false);
+  const [isReopeningChat, setIsReopeningChat] = useState(false);
   const [revealedChatId, setRevealedChatId] = useState<string | null>(null);
   const [chatDeleteConfirmationId, setChatDeleteConfirmationId] = useState<string | null>(null);
   const [contactRequestAction, setContactRequestAction] = useState<"accept" | "decline" | null>(
@@ -302,6 +305,7 @@ export function ChatList() {
   const canSendChatImages =
     activeChat !== null &&
     user?.accountKind === "client" &&
+    !activeChat.isLocked &&
     !isPendingProviderContact &&
     !isPendingClientContact;
   const activeChatDisplayName = activeChat ? getFirstNames(activeChat.name, 2) : "";
@@ -313,7 +317,7 @@ export function ChatList() {
   const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!activeChat || isSendingMessage) {
+    if (!activeChat || activeChat.isLocked || isSendingMessage) {
       return;
     }
 
@@ -328,6 +332,21 @@ export function ChatList() {
     }
 
     setMessage("");
+  };
+
+  const handleReopenChat = async () => {
+    if (!activeChat || !activeChat.isLocked || isReopeningChat) {
+      return;
+    }
+
+    setIsReopeningChat(true);
+    setMessageError("");
+    const result = await reopenChat(activeChat.id);
+    setIsReopeningChat(false);
+
+    if (!result.ok) {
+      setMessageError(result.error ?? "Não conseguimos reabrir esta conversa agora.");
+    }
   };
 
   const handleSendImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -629,7 +648,7 @@ export function ChatList() {
           </div>
 
           {filteredChats.length > 0 ? (
-            filteredChats.map((chat, index) => {
+            filteredChats.map((chat) => {
               const lastMessage = getLastItem(chat.messages);
               const chatDisplayName = getFirstNames(chat.name, 2);
 
@@ -649,13 +668,11 @@ export function ChatList() {
                     </button>
 
                     <motion.button
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={false}
                       animate={{
-                        opacity: 1,
-                        y: 0,
                         x: revealedChatId === chat.id ? -88 : 0,
                       }}
-                      transition={{ delay: index * 0.05 }}
+                      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                       drag="x"
                       dragConstraints={{ left: -96, right: 0 }}
                       dragElastic={0.08}
@@ -1083,7 +1100,33 @@ export function ChatList() {
               )}
             </div>
 
-            {!isPendingProviderContact && !isPendingClientContact && (
+            {activeChat.isLocked ? (
+              <div className="shrink-0 border-t border-slate-100 bg-white px-4 py-4 md:px-6">
+                {messageError ? (
+                  <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {messageError}
+                  </div>
+                ) : null}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-center">
+                  <div className="flex items-center justify-center gap-2 text-sm font-bold text-slate-800">
+                    <LockKeyhole className="h-4 w-4 text-slate-500" />
+                    Chat bloqueado após a conclusão do serviço
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                    Para voltar a conversar com {activeChatDisplayName}, entre em contato novamente.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleReopenChat()}
+                    disabled={isReopeningChat}
+                    className="mt-3 inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    {isReopeningChat ? "Entrando em contato..." : "Entrar em contato novamente"}
+                  </button>
+                </div>
+              </div>
+            ) : !isPendingProviderContact && !isPendingClientContact ? (
               <form
                 onSubmit={handleSendMessage}
                 className="shrink-0 bg-white px-4 py-4 md:px-6"
@@ -1143,7 +1186,7 @@ export function ChatList() {
                   </button>
                 </div>
               </form>
-            )}
+            ) : null}
           </>
         ) : (
           <div className="hidden min-h-0 flex-1 items-center justify-center p-8 md:flex">

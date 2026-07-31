@@ -121,7 +121,7 @@ export function LegalPage() {
               Suporte oficial
             </p>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              Em casó de dúvidas sobre conta, pagamentos, privacidade ou segurança, use o canal
+              Em caso de dúvidas sobre conta, pagamentos, privacidade ou segurança, use o canal
               oficial abaixo.
             </p>
 

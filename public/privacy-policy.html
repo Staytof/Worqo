@@ -3,84 +3,68 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <title>Política de Privacidade - Worko</title>
     <style>
-      body {
-        margin: 0;
-        font-family: "Nunito", "Segoe UI", Arial, sans-serif;
-        background: #f8fafc;
-        color: #0f172a;
-        line-height: 1.6;
-      }
-      main {
-        max-width: 860px;
-        margin: 0 auto;
-        padding: 40px 20px;
-      }
-      article {
-        background: #fff;
-        border: 1px solid #e2e8f0;
-        border-radius: 24px;
-        padding: 28px;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
-      }
-      h1 {
-        margin-top: 0;
-      }
-      a {
-        color: #2563eb;
-        font-weight: 700;
-      }
+      :root { color-scheme: light; font-family: "Segoe UI", Arial, sans-serif; color: #0f172a; background: #f8fafc; }
+      body { margin: 0; line-height: 1.65; }
+      main { max-width: 900px; margin: 0 auto; padding: 32px 18px 56px; }
+      article { background: #fff; border: 1px solid #e2e8f0; border-radius: 24px; padding: clamp(22px, 5vw, 42px); box-shadow: 0 12px 35px rgba(15, 23, 42, .06); }
+      h1 { margin: 0; font-size: clamp(1.8rem, 5vw, 2.5rem); line-height: 1.15; }
+      h2 { margin-top: 2rem; font-size: 1.2rem; }
+      p, li { color: #475569; }
+      a { color: #1d4ed8; font-weight: 700; }
+      .meta, .notice { border-radius: 16px; padding: 14px 16px; }
+      .meta { margin: 18px 0; background: #eff6ff; color: #1e40af; }
+      .notice { background: #ecfdf5; color: #065f46; }
+      nav { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+      nav a { border: 1px solid #dbeafe; border-radius: 999px; padding: 7px 12px; text-decoration: none; }
     </style>
   </head>
   <body>
     <main>
       <article>
         <h1>Política de Privacidade do Worko</h1>
-        <p><strong>Última atualização:</strong> 18/06/2026</p>
-        <p>
-          O Worko trata dados pessoais para criar e autenticar contas, operar mapa, mural, chat,
-          solicitações de serviço, verificação de CPF, pagamentos Pix, carteira, saques,
-          notificações, suporte, prevenção a fraude, segurança e cumprimento de obrigações legais.
-        </p>
-        <h2>Dados tratados</h2>
+        <p class="meta"><strong>Versão 2026-07-31.2</strong> · Atualizada em 31/07/2026</p>
+        <nav aria-label="Documentos legais">
+          <a href="/legal#privacidade">Versão completa no Worko</a>
+          <a href="/terms-of-use.html">Termos de Uso</a>
+          <a href="/account-deletion.html">Excluir conta e dados</a>
+        </nav>
+
+        <h2>1. Quem controla os dados e como falar conosco</h2>
+        <p>O Worko, operado por Raaberts Softwares, controla os dados tratados diretamente para oferecer a plataforma. Pedidos sobre privacidade, segurança ou direitos do titular podem ser enviados para <a href="mailto:Raabertssoftwares@gmail.com">Raabertssoftwares@gmail.com</a> ou pelo SAC oficial do aplicativo.</p>
+
+        <h2>2. Dados tratados</h2>
         <ul>
-          <li>Dados cadastrais: nome, e-mail, telefone, data de nascimento, endereço, CPF e avatar.</li>
-          <li>Dados de perfil: profissão, habilidades, disponibilidade, biografia e chave Pix.</li>
-          <li>Dados de uso: publicações, pedidos, chats, avaliações, tickets de suporte e notificações.</li>
-          <li>Dados de localização: GPS autorizado, endereço informado pelo usuário e coordenadas aproximadas.</li>
-          <li>Dados de pagamento: cobranças Pix, status, recibos, carteira, saques e conciliações.</li>
-          <li>Dados técnicos: sessão, versão do app, token push, registros de erro e segurança.</li>
+          <li>Cadastro e perfil: nome, e-mail, telefone, data de nascimento, endereço, CPF, avatar, profissão, habilidades, disponibilidade, biografia e chave Pix.</li>
+          <li>Verificação de Prestadores: foto do rosto, número e imagem do RG, CPF, documentos reenviados, resultado da análise e observações administrativas.</li>
+          <li>Uso do serviço: pedidos, mapa e localização autorizada, divulgações, chats, fotos capturadas, avaliações, suporte, histórico do atendimento e registros de chegada.</li>
+          <li>Disputas: motivo, resposta das partes, evidência fotográfica, prazos, decisão e ressarcimento.</li>
+          <li>Pagamentos: valores, taxas, identificadores e status de cobrança Asaas, QR Code Pix, recibos, estornos, carteira e saques. O Worko não pede sua senha bancária.</li>
+          <li>Segurança e dispositivo: sessões, aparelhos reconhecidos, tokens de e-mail e push, endereço IP quando registrado, versão do app, plataforma, eventos e registros de erro.</li>
         </ul>
-        <h2>Compartilhamento</h2>
-        <p>
-          Os dados podem ser compartilhados com operadores necessários ao funcionamento do app,
-          como provedores de hospedagem, mapas, geolocalização, e-mail, autenticação, notificações,
-          verificação cadastral, pagamentos Pix, suporte, monitoramento e autoridades competentes
-          quando houver base legal.
-        </p>
-        <h2>Retenção e exclusão</h2>
-        <p>
-          O usuário pode solicitar exclusão pelo app em <strong>Perfil &gt; Meus dados</strong> ou
-          pela página pública <a href="/account-deletion.html">Exclusão de conta e dados pessoais</a>.
-          Após validação, removemos ou anonimizamos dados pessoais associados à conta, exceto dados
-          que precisem permanecer por obrigação legal, segurança, prevenção a fraude, pagamentos,
-          disputas, auditoria ou exercício regular de direitos.
-        </p>
-        <h2>Direitos LGPD</h2>
-        <p>
-          O titular pode solicitar confirmação de tratamento, acesso, correção, anonimização,
-          bloqueio, eliminação, portabilidade, informação sobre compartilhamento e revisão de
-          decisões automatizadas, observados os limites legais e técnicos.
-        </p>
-        <h2>Contato</h2>
-        <p>
-          Para privacidade, segurança ou suporte, envie e-mail para
-          <a href="mailto:Raabertssoftwares@gmail.com">Raabertssoftwares@gmail.com</a>.
-        </p>
+
+        <h2>3. Para que usamos os dados</h2>
+        <p>Usamos os dados para criar, autenticar, recuperar e proteger contas; confirmar novo aparelho; verificar Prestadores; operar mapa, pedidos, chats e avaliações; processar Pix, carteira, saques, disputas e ressarcimentos; enviar alertas; atender o SAC; prevenir fraude; cumprir obrigações legais e exercer direitos.</p>
+
+        <h2>4. Bases legais</h2>
+        <p>Conforme o caso, o tratamento se apoia na execução dos Termos e de procedimentos preliminares, obrigação legal ou regulatória, exercício regular de direitos, proteção da vida ou segurança física, prevenção a fraude nos processos de identificação, legítimo interesse avaliado e consentimento. Permissões de localização, câmera, fotos e notificações podem ser revogadas no aparelho, mas a função correspondente pode ficar limitada.</p>
+
+        <h2>5. Compartilhamento</h2>
+        <p>Compartilhamos somente o necessário com fornecedores de hospedagem, armazenamento, segurança, e-mail, autenticação, suporte, Google Maps e geolocalização, Firebase Cloud Messaging, validação cadastral e o Asaas para cobrança Pix, comprovantes, estornos e transferências. Dados também podem ser fornecidos a autoridades quando houver fundamento legal ou ordem competente.</p>
+
+        <h2>6. Notificações e armazenamento no aparelho</h2>
+        <p>O app pode guardar sessão, preferências, token push e dados temporários no aparelho. Notificações externas dependem da permissão e usam o canal e o toque padrão configurado no dispositivo. O som, a vibração e a exibição final são controlados também pelo sistema operacional.</p>
+
+        <h2>7. Retenção e exclusão</h2>
+        <p>Guardamos os dados pelo tempo necessário para operar a conta, concluir pagamentos e saques, resolver disputas, prevenir fraude, cumprir deveres legais e exercer direitos. Após a exclusão, removemos ou anonimizamos dados que não precisem ser preservados. Documentos de identidade têm acesso restrito e são eliminados ou anonimizados quando deixam de ser necessários, ressalvadas as hipóteses legais de conservação.</p>
+        <p class="notice">O e-mail de conta excluída, suspensa ou banida permanece em lista permanente de bloqueio e não pode ser usado para criar outra conta Worko, conforme informado antes da exclusão.</p>
+
+        <h2>8. Seus direitos</h2>
+        <p>O titular pode pedir confirmação e acesso, correção, anonimização, bloqueio, eliminação, portabilidade, informação sobre compartilhamento, oposição, revogação do consentimento e revisão de decisão exclusivamente automatizada, quando aplicável. Podemos pedir prova de identidade e preservar dados cuja guarda seja legalmente permitida ou obrigatória.</p>
+
+        <h2>9. Segurança, idade mínima e atualizações</h2>
+        <p>Adotamos controles técnicos e administrativos razoáveis, embora nenhum sistema seja totalmente inviolável. O Worko não permite cadastro de menores de 18 anos. Mudanças relevantes serão publicadas no app e nesta página; quando necessário, haverá novo aceite.</p>
       </article>
     </main>
   </body>

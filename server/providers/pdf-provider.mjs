@@ -103,7 +103,7 @@ export async function buildServicePaymentReceiptPdf(receipt) {
   writePair(doc, "Taxa do app (10%)", formatCurrencyFromCents(receipt.amounts.appFeeCents));
   writePair(
     doc,
-    "Asaas (intermediadora que protege seu dinheiro)",
+    "Taxa de intermediação Worko",
     formatCurrencyFromCents(receipt.amounts.asaasFeeCents)
   );
   writePair(doc, "Total pago", formatCurrencyFromCents(receipt.amounts.totalCents));

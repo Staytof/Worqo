@@ -1,5 +1,6 @@
 ﻿import { db } from "./db.mjs";
 import { isAdminEmail } from "./config.mjs";
+import { sendProviderVerificationDecisionEmail } from "./providers/email-provider.mjs";
 import { HttpError } from "./utils.mjs";
 
 const LIVE_REQUEST_STATUSES = new Set([
@@ -28,7 +29,14 @@ const selectAdminRequestRowsStatement = db.prepare(`
     requester.full_name AS requester_name,
     requester.email AS requester_email,
     worker.full_name AS worker_name,
-    worker.email AS worker_email
+    worker.email AS worker_email,
+    (
+      SELECT COUNT(*)
+      FROM service_requests AS worker_incidents
+      WHERE worker_incidents.worker_user_id = service_requests.worker_user_id
+        AND worker_incidents.dispute_kind = 'provider-no-show'
+        AND worker_incidents.dispute_status = 'refunded'
+    ) AS worker_no_show_count
   FROM service_requests
   INNER JOIN users AS requester ON requester.id = service_requests.requester_user_id
   LEFT JOIN users AS worker ON worker.id = service_requests.worker_user_id
@@ -123,6 +131,86 @@ const selectSupportOverviewStatement = db.prepare(`
   FROM support_tickets
 `);
 
+const providerVerificationSelect = `
+  SELECT
+    users.id,
+    users.full_name,
+    users.email,
+    users.phone,
+    users.birth_date,
+    users.cpf,
+    users.cpf_digits,
+    users.avatar,
+    users.headline,
+    users.created_at,
+    users.updated_at,
+    users.email_verified_at,
+    users.cpf_verified_at,
+    users.profile_setup_completed_at,
+    users.provider_verification_status,
+    users.provider_verification_submitted_at,
+    users.provider_verification_decided_at,
+    users.provider_verification_requested_reason,
+    users.provider_verification_decision_note,
+    users.provider_verification_document_version,
+    users.provider_rg_number,
+    users.provider_face_image,
+    users.provider_rg_document_image,
+    reviewer.full_name AS provider_verification_reviewer_name
+  FROM users
+  LEFT JOIN users AS reviewer
+    ON reviewer.id = users.provider_verification_reviewed_by_user_id
+`;
+
+const selectProviderVerificationRowsStatement = db.prepare(`
+  ${providerVerificationSelect}
+  WHERE users.account_kind = 'provider'
+    AND users.deleted_at IS NULL
+  ORDER BY
+    CASE users.provider_verification_status
+      WHEN 'under_review' THEN 0
+      WHEN 'changes_requested' THEN 1
+      WHEN 'pending_documents' THEN 2
+      WHEN 'rejected' THEN 3
+      WHEN 'approved' THEN 4
+      ELSE 5
+    END,
+    users.provider_verification_submitted_at DESC,
+    users.created_at DESC
+`);
+
+const selectProviderVerificationRowByIdStatement = db.prepare(`
+  ${providerVerificationSelect}
+  WHERE users.id = ?
+    AND users.account_kind = 'provider'
+    AND users.deleted_at IS NULL
+  LIMIT 1
+`);
+
+const updateProviderVerificationStatement = db.prepare(`
+  UPDATE users
+  SET
+    provider_verification_status = ?,
+    provider_verification_decided_at = ?,
+    provider_verification_requested_reason = ?,
+    provider_verification_decision_note = ?,
+    provider_verification_reviewed_by_user_id = ?,
+    cpf_verified_at = CASE WHEN ? = 'approved' THEN COALESCE(cpf_verified_at, ?) ELSE cpf_verified_at END,
+    cpf_verified_name = CASE WHEN ? = 'approved' THEN full_name ELSE cpf_verified_name END,
+    cpf_verification_provider = CASE WHEN ? = 'approved' THEN 'worko-admin-review' ELSE cpf_verification_provider END,
+    cpf_verification_checked_at = CASE WHEN ? = 'approved' THEN ? ELSE cpf_verification_checked_at END,
+    pix_withdrawal_key_type = CASE
+      WHEN ? = 'approved' AND COALESCE(pix_withdrawal_key_type, '') = '' THEN 'CPF'
+      ELSE pix_withdrawal_key_type
+    END,
+    pix_withdrawal_key = CASE
+      WHEN ? = 'approved' AND COALESCE(pix_withdrawal_key, '') = '' THEN cpf_digits
+      ELSE pix_withdrawal_key
+    END,
+    updated_at = ?
+  WHERE id = ?
+`);
+
 function isRecentWithinDays(value, days) {
   if (!value) {
     return false;
@@ -161,9 +249,15 @@ function mapDispute(row) {
   return {
     status:
       status === "open" || status === "resolved" || status === "refunded" ? status : null,
+    kind: row.dispute_kind === "provider-no-show" ? "provider-no-show" : "general",
     reason: row.dispute_reason ?? "",
     openedAt: row.disputed_at ?? null,
     openedByUserId: row.disputed_by_user_id ?? null,
+    evidenceImage: row.dispute_evidence_image ?? null,
+    providerResponse: row.dispute_provider_response ?? null,
+    providerRespondedAt: row.dispute_provider_responded_at ?? null,
+    providerAcknowledgedNoShow: Boolean(row.dispute_provider_acknowledged_no_show),
+    responseDueAt: row.dispute_response_due_at ?? null,
     resolution: row.dispute_resolution ?? null,
     resolvedAt: row.dispute_resolved_at ?? null,
     adminNote: row.dispute_admin_note ?? null,
@@ -248,6 +342,34 @@ function mapUser(row) {
   };
 }
 
+function mapProviderVerification(row, includeDocuments = true) {
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email,
+    phone: row.phone,
+    birthDate: row.birth_date,
+    cpf: row.cpf,
+    avatar: row.avatar ?? null,
+    headline: row.headline ?? "",
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+    emailVerifiedAt: row.email_verified_at ?? null,
+    cpfVerifiedAt: row.cpf_verified_at ?? null,
+    profileCompletedAt: row.profile_setup_completed_at ?? null,
+    status: row.provider_verification_status ?? "pending_documents",
+    submittedAt: row.provider_verification_submitted_at ?? null,
+    decidedAt: row.provider_verification_decided_at ?? null,
+    requestedReason: row.provider_verification_requested_reason ?? null,
+    decisionNote: row.provider_verification_decision_note ?? null,
+    documentVersion: Number(row.provider_verification_document_version) || 0,
+    rgNumber: row.provider_rg_number ?? "",
+    faceImage: includeDocuments ? row.provider_face_image ?? null : null,
+    rgDocumentImage: includeDocuments ? row.provider_rg_document_image ?? null : null,
+    reviewerName: row.provider_verification_reviewer_name ?? null,
+  };
+}
+
 const updateUserAdminStateStatement = db.prepare(`
   UPDATE users
   SET
@@ -257,6 +379,14 @@ const updateUserAdminStateStatement = db.prepare(`
     suspension_reason = ?,
     updated_at = ?
   WHERE id = ?
+`);
+
+const blockSuspendedAccountEmailStatement = db.prepare(`
+  INSERT INTO blocked_account_emails (email, user_id, reason, created_at)
+  VALUES (?, ?, 'suspended', ?)
+  ON CONFLICT(email) DO UPDATE SET
+    user_id = excluded.user_id,
+    reason = excluded.reason
 `);
 
 const selectAdminUserRowByIdStatement = db.prepare(`
@@ -313,7 +443,7 @@ const selectAdminUserRowByIdStatement = db.prepare(`
   LIMIT 1
 `);
 
-function buildOverview(requestRows, withdrawals, users, supportOverviewRow) {
+function buildOverview(requestRows, withdrawals, users, supportOverviewRow, providerVerifications) {
   const grossVolumeCents = requestRows.reduce((total, row) => {
     const paymentStatus = String(row.asaas_payment_status ?? "").trim().toUpperCase();
     return PAID_STATUSES.has(paymentStatus)
@@ -351,10 +481,13 @@ function buildOverview(requestRows, withdrawals, users, supportOverviewRow) {
     ).length,
     grossVolumeCents,
     feeVolumeCents,
+    pendingProviderVerifications: providerVerifications.filter(
+      (provider) => provider.status === "under_review"
+    ).length,
   };
 }
 
-export function getAdminDashboard() {
+export function getAdminDashboard({ includeProviderDocuments = false } = {}) {
   const requestRows = selectAdminRequestRowsStatement.all();
   const requestStatusCounts = selectRequestStatusCountsStatement.all().map((row) => ({
     status: row.status,
@@ -366,9 +499,19 @@ export function getAdminDashboard() {
     .map(mapUser)
     .filter((user) => !user.isAdmin);
   const supportOverviewRow = selectSupportOverviewStatement.get() ?? {};
+  const providerVerifications = selectProviderVerificationRowsStatement
+    .all()
+    .filter((provider) => !isAdminEmail(provider.email))
+    .map((provider) => mapProviderVerification(provider, includeProviderDocuments));
 
   return {
-    overview: buildOverview(requestRows, withdrawals, users, supportOverviewRow),
+    overview: buildOverview(
+      requestRows,
+      withdrawals,
+      users,
+      supportOverviewRow,
+      providerVerifications
+    ),
     requestStatusCounts,
     requests: requestRows.map((row) => ({
       id: row.id,
@@ -380,6 +523,7 @@ export function getAdminDashboard() {
       requesterEmail: row.requester_email ?? "",
       workerName: row.worker_name ?? null,
       workerEmail: row.worker_email ?? null,
+      workerNoShowCount: Number(row.worker_no_show_count) || 0,
       latitude: Number(row.latitude) || 0,
       longitude: Number(row.longitude) || 0,
       accuracy: Number(row.accuracy) || null,
@@ -394,6 +538,7 @@ export function getAdminDashboard() {
       timeline: selectTimelineByRequestIdStatement.all(row.id).map(mapTimelineEvent),
     })),
     users,
+    providerVerifications,
     supportOverview: {
       totalTickets: Number(supportOverviewRow.total_tickets) || 0,
       waitingTickets: Number(supportOverviewRow.waiting_tickets) || 0,
@@ -403,6 +548,104 @@ export function getAdminDashboard() {
       latestCustomerMessageAt: supportOverviewRow.latest_customer_message_at ?? null,
     },
     withdrawals,
+  };
+}
+
+export async function updateProviderVerification(adminUserId, providerUserId, { action, reason }) {
+  const provider = selectProviderVerificationRowByIdStatement.get(providerUserId);
+
+  if (!provider || isAdminEmail(provider.email)) {
+    throw new HttpError(404, "Prestador(a) não encontrado(a) para verificação.");
+  }
+
+  const normalizedAction = String(action ?? "").trim().toLowerCase();
+  const normalizedReason = String(reason ?? "").trim().replace(/\s+/g, " ").slice(0, 500);
+  const currentStatus = String(provider.provider_verification_status ?? "pending_documents");
+  const timestamp = new Date().toISOString();
+  let nextStatus;
+
+  if (normalizedAction === "approve") {
+    if (currentStatus !== "under_review") {
+      throw new HttpError(409, "Somente documentos em análise podem ser aprovados.");
+    }
+
+    if (
+      !provider.cpf_digits ||
+      !provider.provider_rg_number ||
+      !provider.provider_face_image ||
+      !provider.provider_rg_document_image
+    ) {
+      throw new HttpError(409, "O cadastro não possui todos os documentos obrigatórios.");
+    }
+
+    nextStatus = "approved";
+  } else if (normalizedAction === "request-documents") {
+    if (!["pending_documents", "under_review", "changes_requested"].includes(currentStatus)) {
+      throw new HttpError(409, "Este cadastro não aceita uma nova solicitação de documentos.");
+    }
+
+    if (normalizedReason.length < 4) {
+      throw new HttpError(400, "Explique quais documentos precisam ser enviados novamente.");
+    }
+
+    nextStatus = "changes_requested";
+  } else if (normalizedAction === "reject") {
+    if (!["under_review", "changes_requested", "pending_documents"].includes(currentStatus)) {
+      throw new HttpError(409, "Este cadastro já possui uma decisão final.");
+    }
+
+    if (normalizedReason.length < 4) {
+      throw new HttpError(400, "Informe o motivo da recusa do cadastro.");
+    }
+
+    nextStatus = "rejected";
+  } else {
+    throw new HttpError(400, "Ação de verificação de prestador(a) inválida.");
+  }
+
+  const decidedAt = nextStatus === "changes_requested" ? null : timestamp;
+  const requestedReason = nextStatus === "changes_requested" ? normalizedReason : null;
+  const decisionNote = nextStatus === "changes_requested" ? null : normalizedReason || null;
+
+  updateProviderVerificationStatement.run(
+    nextStatus,
+    decidedAt,
+    requestedReason,
+    decisionNote,
+    adminUserId,
+    nextStatus,
+    timestamp,
+    nextStatus,
+    nextStatus,
+    nextStatus,
+    timestamp,
+    nextStatus,
+    nextStatus,
+    timestamp,
+    providerUserId
+  );
+
+  let emailDelivery;
+
+  try {
+    emailDelivery = await sendProviderVerificationDecisionEmail({
+      email: provider.email,
+      fullName: provider.full_name,
+      decision: nextStatus,
+      reason: normalizedReason,
+    });
+  } catch (error) {
+    console.error("Provider verification decision email failed.", {
+      providerUserId,
+      decision: nextStatus,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    emailDelivery = { provider: "failed" };
+  }
+
+  return {
+    provider: mapProviderVerification(selectProviderVerificationRowByIdStatement.get(providerUserId)),
+    emailDelivery,
   };
 }
 
@@ -450,6 +693,14 @@ export function updateAdminUserState(userId, { action, reason }) {
     timestamp,
     userId
   );
+
+  if (normalizedAction === "suspend") {
+    blockSuspendedAccountEmailStatement.run(
+      String(userRow.email ?? "").trim().toLowerCase(),
+      userId,
+      timestamp
+    );
+  }
 
   return mapUser(selectAdminUserRowByIdStatement.get(userId));
 }

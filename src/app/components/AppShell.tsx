@@ -480,10 +480,16 @@ export function AppShell() {
     };
   }, [canShowScrollableBackButton, location.pathname]);
 
-  useNativePermissionBootstrap(!bootSplashVisible);
+  useNativePermissionBootstrap(!bootSplashVisible && onboardingStep === "app");
 
   useEffect(() => {
-    if (bootSplashVisible || !isAuthenticated || !user || !sessionToken) {
+    if (
+      bootSplashVisible ||
+      onboardingStep !== "app" ||
+      !isAuthenticated ||
+      !user ||
+      !sessionToken
+    ) {
       return;
     }
 
@@ -558,7 +564,7 @@ export function AppShell() {
       dispose();
       removeLocalNotificationListener();
     };
-  }, [bootSplashVisible, isAuthenticated, sessionToken, user?.id]);
+  }, [bootSplashVisible, isAuthenticated, onboardingStep, sessionToken, user?.id]);
 
   if (!authReady || bootSplashVisible) {
     return <AppLoadingScreen />;
@@ -575,6 +581,14 @@ export function AppShell() {
 
   if (onboardingStep === "profile-setup") {
     return <Navigate to="/profile-setup" replace />;
+  }
+
+  if (onboardingStep === "provider-verification") {
+    return <Navigate to="/provider-verification" replace />;
+  }
+
+  if (onboardingStep === "provider-review") {
+    return <Navigate to="/provider-review" replace />;
   }
 
   const isClientAccount = user.accountKind === "client";

@@ -1,5 +1,6 @@
 import {
   Award,
+  BookOpen,
   Briefcase,
   ChevronRight,
   Clock3,
@@ -80,6 +81,11 @@ export function Profile() {
       to: "/app/profile/data",
       icon: User,
       title: "Meus Dados",
+    },
+    {
+      to: "/app/profile/manual",
+      icon: BookOpen,
+      title: isClientAccount ? "Manual do cliente" : "Manual do prestador",
     },
     {
       to: "/app/profile/legal",

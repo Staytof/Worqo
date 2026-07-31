@@ -39,18 +39,27 @@ export function AuthLayout() {
       ? "/admin"
       : onboardingStep === "verify"
       ? "/verify"
+      : onboardingStep === "device-verify"
+        ? "/device-verify"
       : onboardingStep === "profile-setup"
         ? "/profile-setup"
+        : onboardingStep === "provider-verification"
+          ? "/provider-verification"
+          : onboardingStep === "provider-review"
+            ? "/provider-review"
         : isAuthenticated
           ? "/app"
           : null;
 
-  if (redirectPath && location.pathname !== redirectPath) {
+  const isPasswordRecoveryRoute = location.pathname === "/forgot-password";
+
+  if (redirectPath && location.pathname !== redirectPath && !isPasswordRecoveryRoute) {
     return <Navigate to={redirectPath} replace />;
   }
 
   const isLoginRoute = location.pathname === "/";
   const isProfileSetupRoute = location.pathname === "/profile-setup";
+  const isProviderVerificationRoute = location.pathname === "/provider-verification";
 
   return (
     <div
@@ -63,7 +72,7 @@ export function AuthLayout() {
             : "flex items-start justify-center overflow-y-auto bg-[#f4f7fa] p-4 py-6 sm:items-center sm:p-6 sm:py-10"
       }`}
       style={
-        isLoginRoute || isProfileSetupRoute
+        isLoginRoute || isProfileSetupRoute || isProviderVerificationRoute
           ? undefined
           : {
               paddingTop: "calc(24px + env(safe-area-inset-top, 0px))",
@@ -73,7 +82,7 @@ export function AuthLayout() {
             }
       }
     >
-      {!isLoginRoute && !isProfileSetupRoute ? (
+      {!isLoginRoute && !isProfileSetupRoute && !isProviderVerificationRoute ? (
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
           <motion.div
             animate={{

@@ -9,12 +9,17 @@ import { ClientOrders } from "./components/ClientOrders";
 import { Home } from "./components/Home";
 import { LegalPage } from "./components/LegalPage";
 import { Login } from "./components/Login";
+import { DeviceVerification } from "./components/DeviceVerification";
+import { ForgotPassword } from "./components/ForgotPassword";
 import { Notifications } from "./components/Notifications";
 import { Profile } from "./components/Profile";
 import { ProfileAccount } from "./components/ProfileAccount";
 import { ProfileLegal } from "./components/ProfileLegal";
+import { ProfileManual } from "./components/ProfileManual";
 import { ProfileSetup } from "./components/ProfileSetup";
 import { ProfileSupport } from "./components/ProfileSupport";
+import { ProviderReviewStatus } from "./components/ProviderReviewStatus";
+import { ProviderVerification } from "./components/ProviderVerification";
 import { Register } from "./components/Register";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import { ServiceDetails } from "./components/service/ServiceDetails";
@@ -37,8 +42,12 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: Login },
       { path: "register", Component: Register },
+      { path: "forgot-password", Component: ForgotPassword },
       { path: "verify", Component: Verify },
+      { path: "device-verify", Component: DeviceVerification },
       { path: "profile-setup", Component: ProfileSetup },
+      { path: "provider-verification", Component: ProviderVerification },
+      { path: "provider-review", Component: ProviderReviewStatus },
     ],
   },
   {
@@ -60,6 +69,7 @@ export const router = createBrowserRouter([
       { path: "wallet", Component: Wallet },
       { path: "admin", Component: AdminRouteRedirect },
       { path: "profile/data", Component: ProfileAccount },
+      { path: "profile/manual", Component: ProfileManual },
       { path: "profile/legal", Component: ProfileLegal },
       { path: "profile/support", Component: ProfileSupport },
       { path: "service/details", Component: ServiceDetails },

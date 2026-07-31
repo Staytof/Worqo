@@ -24,6 +24,7 @@ import type {
   AppState,
   ChatThread,
   LoginPayload,
+  PendingDeviceVerification,
   PendingVerification,
   Post,
   PostComposerPayload,
@@ -95,6 +96,7 @@ type Result = {
   user?: UserProfile;
   post?: Post;
   requiresVerification?: boolean;
+  requiresDeviceVerification?: boolean;
 };
 
 type ChatMessagePayload = {
@@ -105,8 +107,10 @@ type ChatMessagePayload = {
 };
 
 type SessionResponse = {
-  token: string;
-  user: UserProfile;
+  token: string | null;
+  user: UserProfile | null;
+  requiresDeviceVerification?: boolean;
+  pendingDeviceVerification?: PendingDeviceVerification;
 };
 
 type RemoteServiceRequest = {
@@ -133,6 +137,8 @@ type RemoteServiceRequest = {
   chatId?: string | null;
   payment?: ServicePaymentSnapshot | null;
   dispute?: ServiceDispute | null;
+  noShowEligibleAt?: string | null;
+  canReportNoShow?: boolean;
   timeline?: ServiceTimelineEvent[];
   details?: ActiveServiceRequest["details"];
   createdAt: string;
@@ -164,8 +170,11 @@ type AppContextValue = {
   completeGoogleLogin: (payload: {
     token?: string;
     pendingVerification?: PendingVerification;
+    pendingDeviceVerification?: PendingDeviceVerification;
     rememberMe?: boolean;
   }) => Promise<Result>;
+  verifyDeviceLogin: (code: string) => Promise<Result>;
+  cancelDeviceVerification: () => void;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<Result>;
   register: (payload: RegistrationDraft) => Promise<Result>;
@@ -178,6 +187,12 @@ type AppContextValue = {
   }) => Promise<Result>;
   finishProfileSetup: (avatar: string) => Promise<Result>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<Result>;
+  submitProviderVerification: (payload: {
+    cpf: string;
+    rgNumber: string;
+    faceImage: string;
+    rgDocumentImage: string;
+  }) => Promise<Result>;
   verifyCpf: (cpf: string) => Promise<Result>;
   addPost: (payload: PostComposerPayload) => Promise<Result>;
   removePost: (postId: string) => Promise<Result>;
@@ -196,6 +211,14 @@ type AppContextValue = {
   markServicePaid: () => Promise<Result>;
   markWorkerArrived: () => Promise<Result>;
   openServiceDispute: (reason: string) => Promise<Result>;
+  reportProviderNoShow: (payload: {
+    reason: string;
+    evidenceImage?: string | null;
+  }) => Promise<Result>;
+  respondProviderNoShow: (payload: {
+    response: string;
+    acknowledgesNoShow: boolean;
+  }) => Promise<Result>;
   releaseServicePayment: (payload: ServiceReviewPayload) => Promise<Result>;
   listCompletedServiceRequests: () => Promise<CompletedServiceRequestsResult>;
   refreshSessionState: () => Promise<Result>;
@@ -210,6 +233,7 @@ type AppContextValue = {
   startServiceFromChat: (chatId: string) => Promise<AcceptWorkerResult>;
   clearActiveChat: () => void;
   declineContactRequest: (chatId: string) => Promise<Result>;
+  reopenChat: (chatId: string) => Promise<Result>;
   removeChatThread: (chatId: string) => void;
   reportChatConduct: (chatId: string, payload: { reason: string; details?: string }) => Promise<Result>;
   sendMessage: (chatId: string, message: string | ChatMessagePayload) => Promise<Result>;
@@ -226,6 +250,7 @@ function createInitialState(): AppState {
     themePreference: readThemePreference(),
     sessionToken: null,
     pendingVerification: null,
+    pendingDeviceVerification: null,
     user: null,
     pins: seedPins,
     posts: seedPosts,
@@ -308,6 +333,12 @@ function hydrateUserProfile(user: Partial<UserProfile> | null | undefined): User
     emailVerifiedAt: user.emailVerifiedAt ?? null,
     appTourCompletedAt: user.appTourCompletedAt ?? null,
     hasCompletedProfileSetup: Boolean(user.hasCompletedProfileSetup),
+    providerVerificationStatus: user.providerVerificationStatus ?? "not_required",
+    providerVerificationSubmittedAt: user.providerVerificationSubmittedAt ?? null,
+    providerVerificationRequestedReason: user.providerVerificationRequestedReason ?? null,
+    providerVerificationDecisionNote: user.providerVerificationDecisionNote ?? null,
+    providerVerificationDocumentVersion: user.providerVerificationDocumentVersion ?? 0,
+    providerVerificationHasDocuments: Boolean(user.providerVerificationHasDocuments),
     pixKeyType: user.pixKeyType ?? null,
     pixKey: user.pixKey ?? "",
     hasPixKeyConfigured: Boolean(user.hasPixKeyConfigured),
@@ -391,6 +422,8 @@ function hydrateChat(chat: ChatThread): ChatThread {
     serviceRequestId: chat.serviceRequestId ?? seedChat?.serviceRequestId ?? null,
     serviceType: chat.serviceType ?? seedChat?.serviceType ?? null,
     servicePreview: chat.servicePreview ?? seedChat?.servicePreview ?? null,
+    serviceStatus: chat.serviceStatus ?? seedChat?.serviceStatus ?? null,
+    isLocked: chat.isLocked ?? seedChat?.isLocked ?? false,
     messages: (chat.messages ?? []).map((message) => ({
       ...message,
       messageType: message.messageType === "image" && message.imageUrl ? "image" : "text",
@@ -486,6 +519,7 @@ function hydrateState(): AppState {
       themePreference: normalizeThemePreference(parsed.themePreference ?? initial.themePreference),
       sessionToken: parsed.sessionToken ?? null,
       pendingVerification: parsed.pendingVerification ?? null,
+      pendingDeviceVerification: parsed.pendingDeviceVerification ?? null,
       user: hydrateUserProfile(parsed.user),
       pins: sanitizedPins.length ? sanitizedPins : initial.pins,
       posts: sanitizedPosts.length ? sanitizedPosts : initial.posts,
@@ -636,9 +670,15 @@ function hydrateServiceDispute(
 
   return {
     status: dispute.status,
+    kind: dispute.kind === "provider-no-show" ? "provider-no-show" : "general",
     reason: dispute.reason ?? "",
     openedAt: dispute.openedAt ?? null,
     openedByUserId: dispute.openedByUserId ?? null,
+    evidenceImage: dispute.evidenceImage ?? null,
+    providerResponse: dispute.providerResponse ?? null,
+    providerRespondedAt: dispute.providerRespondedAt ?? null,
+    providerAcknowledgedNoShow: Boolean(dispute.providerAcknowledgedNoShow),
+    responseDueAt: dispute.responseDueAt ?? null,
     resolution: dispute.resolution ?? null,
     resolvedAt: dispute.resolvedAt ?? null,
     adminNote: dispute.adminNote ?? null,
@@ -743,6 +783,8 @@ function mapRemoteActiveServiceRequest(
     dispute: hydrateServiceDispute(
       request.dispute ?? (shouldReuseEphemeralState ? previousRequest.dispute : null)
     ),
+    noShowEligibleAt: request.noShowEligibleAt ?? null,
+    canReportNoShow: Boolean(request.canReportNoShow),
     timeline: hydrateServiceTimeline(
       request.timeline ?? (shouldReuseEphemeralState ? previousRequest.timeline : [])
     ),
@@ -891,11 +933,42 @@ function mergeRemoteChats(
 }
 
 function resolveLoggedOutStep(current: AppState) {
+  if (current.pendingDeviceVerification) {
+    return "device-verify";
+  }
+
   return current.pendingVerification ? "verify" : "login";
 }
 
+function isProviderVerificationLocked(user: UserProfile | null | undefined) {
+  return Boolean(
+    user?.accountKind === "provider" && user.providerVerificationStatus !== "approved"
+  );
+}
+
 function resolveAuthenticatedStep(user: UserProfile | null | undefined) {
-  return user?.isAdmin || user?.hasCompletedProfileSetup ? "app" : "profile-setup";
+  if (user?.isAdmin) {
+    return "app";
+  }
+
+  if (!user?.hasCompletedProfileSetup) {
+    return "profile-setup";
+  }
+
+  if (user.accountKind === "provider") {
+    if (
+      user.providerVerificationStatus === "pending_documents" ||
+      user.providerVerificationStatus === "changes_requested"
+    ) {
+      return "provider-verification";
+    }
+
+    if (user.providerVerificationStatus !== "approved") {
+      return "provider-review";
+    }
+  }
+
+  return "app";
 }
 
 function createEmptyRemoteAppState() {
@@ -1111,6 +1184,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       themePreference: state.themePreference,
       sessionToken: state.sessionToken,
       pendingVerification: state.pendingVerification,
+      pendingDeviceVerification: state.pendingDeviceVerification,
       user: state.user,
       pins: state.pins,
       posts: state.posts,
@@ -1155,7 +1229,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           token: state.sessionToken,
         });
         const [remoteAppState, notifications] = await Promise.all([
-          data.user.isAdmin
+          data.user.isAdmin || isProviderVerificationLocked(data.user)
             ? Promise.resolve(createEmptyRemoteAppState())
             : resolveRemoteAppState(
                 state.sessionToken,
@@ -1165,7 +1239,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 state.posts,
                 state.activeChatId
               ),
-          consumeRemoteNotifications(state.sessionToken),
+          isProviderVerificationLocked(data.user)
+            ? Promise.resolve([])
+            : consumeRemoteNotifications(state.sessionToken),
         ]);
 
         if (cancelled) {
@@ -1179,6 +1255,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           authReady: true,
           isAuthenticated: true,
           pendingVerification: null,
+          pendingDeviceVerification: null,
           user: data.user,
           pins: remoteAppState.pins,
           posts: remoteAppState.posts,
@@ -1309,6 +1386,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             chats: [],
             notifications: [],
             pendingVerification: null,
+            pendingDeviceVerification: null,
             onboardingStep: "login",
             activeChatId: null,
             activeServiceRequest: null,
@@ -1356,15 +1434,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ...getDeviceIdentity(),
         },
       });
-      const remoteAppState = session.user.isAdmin
+
+      if (session.requiresDeviceVerification && session.pendingDeviceVerification) {
+        setState((current) => ({
+          ...current,
+          authReady: true,
+          isAuthenticated: false,
+          rememberSession: rememberMe,
+          sessionToken: null,
+          user: null,
+          pendingVerification: null,
+          pendingDeviceVerification: session.pendingDeviceVerification ?? null,
+          onboardingStep: "device-verify",
+        }));
+
+        return { ok: true, requiresDeviceVerification: true };
+      }
+
+      if (!session.token || !session.user) {
+        throw new Error("O servidor não retornou uma sessão válida.");
+      }
+
+      const sessionToken = session.token;
+      const sessionUser = session.user;
+      const remoteAppState = sessionUser.isAdmin || isProviderVerificationLocked(sessionUser)
         ? createEmptyRemoteAppState()
-        : await resolveRemoteAppState(session.token);
+        : await resolveRemoteAppState(sessionToken);
 
       setState((current) => ({
         ...current,
         rememberSession: rememberMe,
-        sessionToken: session.token,
-        user: session.user,
+        sessionToken,
+        user: sessionUser,
         isAuthenticated: true,
         authReady: true,
         pins: remoteAppState.pins,
@@ -1372,12 +1473,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         chats: remoteAppState.chats,
         notifications: [],
         pendingVerification: null,
-        onboardingStep: resolveAuthenticatedStep(session.user),
+        pendingDeviceVerification: null,
+        onboardingStep: resolveAuthenticatedStep(sessionUser),
         activeChatId: null,
         activeServiceRequest: remoteAppState.activeServiceRequest,
       }));
 
-      return { ok: true, user: session.user };
+      return { ok: true, user: sessionUser };
     } catch (error) {
       if (
         error instanceof ApiRequestError &&
@@ -1398,6 +1500,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           sessionToken: null,
           user: null,
           pendingVerification: error.data.details.pendingVerification as PendingVerification,
+          pendingDeviceVerification: null,
           onboardingStep: "verify",
         }));
       }
@@ -1407,6 +1510,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
         error: error instanceof Error ? error.message : "Não conseguimos entrar agora.",
       };
     }
+  };
+
+  const verifyDeviceLogin = async (code: string): Promise<Result> => {
+    const pending = state.pendingDeviceVerification;
+
+    if (!pending) {
+      return {
+        ok: false,
+        error: "Faça o login novamente para confirmar este aparelho.",
+      };
+    }
+
+    try {
+      const session = await apiRequest<SessionResponse>("/api/auth/device/verify", {
+        method: "POST",
+        body: {
+          challengeId: pending.challengeId,
+          code,
+        },
+      });
+
+      if (!session.token || !session.user) {
+        throw new Error("O servidor não retornou uma sessão válida.");
+      }
+
+      const sessionToken = session.token;
+      const sessionUser = session.user;
+      const remoteAppState = sessionUser.isAdmin || isProviderVerificationLocked(sessionUser)
+        ? createEmptyRemoteAppState()
+        : await resolveRemoteAppState(sessionToken);
+
+      setState((current) => ({
+        ...current,
+        authReady: true,
+        isAuthenticated: true,
+        sessionToken,
+        user: sessionUser,
+        pendingVerification: null,
+        pendingDeviceVerification: null,
+        pins: remoteAppState.pins,
+        posts: remoteAppState.posts,
+        chats: remoteAppState.chats,
+        notifications: [],
+        onboardingStep: resolveAuthenticatedStep(sessionUser),
+        activeChatId: null,
+        activeServiceRequest: remoteAppState.activeServiceRequest,
+      }));
+
+      return { ok: true, user: sessionUser };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error ? error.message : "Não conseguimos confirmar este aparelho.",
+      };
+    }
+  };
+
+  const cancelDeviceVerification = () => {
+    setState((current) => ({
+      ...current,
+      authReady: true,
+      isAuthenticated: false,
+      sessionToken: null,
+      user: null,
+      pendingDeviceVerification: null,
+      onboardingStep: current.pendingVerification ? "verify" : "login",
+    }));
   };
 
   const logout = async () => {
@@ -1436,6 +1607,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       chats: [],
       notifications: [],
       pendingVerification: null,
+      pendingDeviceVerification: null,
       onboardingStep: "login",
       activeChatId: null,
       activeServiceRequest: null,
@@ -1512,6 +1684,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       chats: [],
       notifications: [],
       pendingVerification: null,
+      pendingDeviceVerification: null,
       onboardingStep: "login",
       activeChatId: null,
       activeServiceRequest: null,
@@ -1537,6 +1710,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         sessionToken: null,
         user: null,
         pendingVerification: pendingUser,
+        pendingDeviceVerification: null,
         onboardingStep: "verify",
       }));
 
@@ -1616,14 +1790,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ...getDeviceIdentity(),
         },
       });
-      const remoteAppState = session.user.isAdmin
+
+      if (!session.token || !session.user) {
+        throw new Error("O servidor não retornou uma sessão válida.");
+      }
+
+      const sessionToken = session.token;
+      const sessionUser = session.user;
+      const remoteAppState = sessionUser.isAdmin || isProviderVerificationLocked(sessionUser)
         ? createEmptyRemoteAppState()
-        : await resolveRemoteAppState(session.token);
+        : await resolveRemoteAppState(sessionToken);
 
       setState((current) => ({
         ...current,
-        sessionToken: session.token,
-        user: session.user,
+        sessionToken,
+        user: sessionUser,
         rememberSession: current.rememberSession,
         authReady: true,
         isAuthenticated: true,
@@ -1632,8 +1813,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         chats: remoteAppState.chats,
         notifications: [],
         pendingVerification: null,
+        pendingDeviceVerification: null,
         activeServiceRequest: remoteAppState.activeServiceRequest,
-        onboardingStep: resolveAuthenticatedStep(session.user),
+        onboardingStep: resolveAuthenticatedStep(sessionUser),
       }));
 
       return { ok: true };
@@ -1726,6 +1908,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const submitProviderVerification = async (payload: {
+    cpf: string;
+    rgNumber: string;
+    faceImage: string;
+    rgDocumentImage: string;
+  }): Promise<Result> => {
+    if (!state.user || !state.sessionToken) {
+      return { ok: false, error: "Não encontramos sua conta." };
+    }
+
+    const normalizedCpf = formatCpf(payload.cpf);
+
+    if (!isValidCpf(normalizedCpf)) {
+      return { ok: false, error: "CPF inválido. Confira os 11 dígitos antes de enviar." };
+    }
+
+    try {
+      const data = await apiRequest<{ user: UserProfile }>(
+        "/api/me/provider-verification",
+        {
+          method: "POST",
+          token: state.sessionToken,
+          body: { ...payload, cpf: normalizedCpf },
+        }
+      );
+
+      const user = hydrateUserProfile(data.user) ?? data.user;
+      setState((current) => ({
+        ...current,
+        user,
+        pins: [],
+        posts: [],
+        chats: [],
+        activeServiceRequest: null,
+        onboardingStep: resolveAuthenticatedStep(user),
+      }));
+
+      return { ok: true, user };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos enviar seus documentos agora.",
+      };
+    }
+  };
+
   const verifyCpf = async (cpf: string): Promise<Result> => {
     if (!state.user || !state.sessionToken) {
       return {
@@ -1779,12 +2010,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const completeGoogleLogin = async ({
     token,
     pendingVerification,
+    pendingDeviceVerification,
     rememberMe = true,
   }: {
     token?: string;
     pendingVerification?: PendingVerification;
+    pendingDeviceVerification?: PendingDeviceVerification;
     rememberMe?: boolean;
   }): Promise<Result> => {
+    if (pendingDeviceVerification) {
+      setState((current) => ({
+        ...current,
+        authReady: true,
+        isAuthenticated: false,
+        rememberSession: rememberMe,
+        sessionToken: null,
+        user: null,
+        pendingVerification: null,
+        pendingDeviceVerification,
+        onboardingStep: "device-verify",
+      }));
+
+      return {
+        ok: true,
+        requiresDeviceVerification: true,
+      };
+    }
+
     if (pendingVerification) {
       setState((current) => ({
         ...current,
@@ -1794,6 +2046,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         sessionToken: null,
         user: null,
         pendingVerification,
+        pendingDeviceVerification: null,
         onboardingStep: "verify",
       }));
 
@@ -1814,7 +2067,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const session = await apiRequest<{ user: UserProfile }>("/api/auth/session", {
         token,
       });
-      const remoteAppState = session.user.isAdmin
+      const remoteAppState = session.user.isAdmin || isProviderVerificationLocked(session.user)
         ? createEmptyRemoteAppState()
         : await resolveRemoteAppState(token);
 
@@ -1830,6 +2083,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         chats: remoteAppState.chats,
         notifications: [],
         pendingVerification: null,
+        pendingDeviceVerification: null,
         onboardingStep: resolveAuthenticatedStep(session.user),
         activeChatId: null,
         activeServiceRequest: remoteAppState.activeServiceRequest,
@@ -2670,6 +2924,99 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const reportProviderNoShow = async (payload: {
+    reason: string;
+    evidenceImage?: string | null;
+  }): Promise<Result> => {
+    if (!state.sessionToken || !state.activeServiceRequest) {
+      return {
+        ok: false,
+        error: "Não encontramos um atendimento ativo para solicitar o ressarcimento.",
+      };
+    }
+
+    try {
+      const data = await apiRequest<{ request: RemoteServiceRequest }>(
+        `/api/service-requests/${state.activeServiceRequest.id}/no-show`,
+        {
+          method: "PATCH",
+          token: state.sessionToken,
+          body: payload,
+        }
+      );
+
+      setState((current) => ({
+        ...current,
+        activeServiceRequest: mapRemoteActiveServiceRequest(
+          data.request,
+          current.activeServiceRequest
+        ),
+      }));
+
+      await refreshSessionState();
+
+      return {
+        ok: true,
+        message: "Solicitação registrada. O pagamento permanece bloqueado até a conclusão.",
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos solicitar o ressarcimento agora.",
+      };
+    }
+  };
+
+  const respondProviderNoShow = async (payload: {
+    response: string;
+    acknowledgesNoShow: boolean;
+  }): Promise<Result> => {
+    if (!state.sessionToken || !state.activeServiceRequest) {
+      return {
+        ok: false,
+        error: "Não encontramos o atendimento para registrar sua resposta.",
+      };
+    }
+
+    try {
+      const data = await apiRequest<{ request: RemoteServiceRequest | null }>(
+        `/api/service-requests/${state.activeServiceRequest.id}/no-show-response`,
+        {
+          method: "PATCH",
+          token: state.sessionToken,
+          body: payload,
+        }
+      );
+
+      setState((current) => ({
+        ...current,
+        activeServiceRequest: data.request
+          ? mapRemoteActiveServiceRequest(data.request, current.activeServiceRequest)
+          : null,
+      }));
+
+      await refreshSessionState();
+
+      return {
+        ok: true,
+        message: payload.acknowledgesNoShow
+          ? "Ausência confirmada e ressarcimento integral iniciado."
+          : "Sua resposta foi enviada para análise da administração.",
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos registrar sua resposta agora.",
+      };
+    }
+  };
+
   const refreshSessionState = async (): Promise<Result> => {
     if (!state.sessionToken) {
       return {
@@ -2681,7 +3028,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const remoteUser = await loadRemoteSessionUser(state.sessionToken);
       const [remoteAppState, incomingNotifications] = await Promise.all([
-        remoteUser.isAdmin
+        remoteUser.isAdmin || isProviderVerificationLocked(remoteUser)
           ? Promise.resolve(createEmptyRemoteAppState())
           : resolveRemoteAppState(
               state.sessionToken,
@@ -2691,7 +3038,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
               state.posts,
               state.activeChatId
             ),
-        consumeRemoteNotifications(state.sessionToken),
+        isProviderVerificationLocked(remoteUser)
+          ? Promise.resolve([])
+          : consumeRemoteNotifications(state.sessionToken),
       ]);
       const notifications = incomingNotifications.filter(
         (notification) => {
@@ -2744,8 +3093,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const releasedChatId = state.activeServiceRequest.chatId ?? null;
-
       await apiRequest(
         `/api/service-requests/${state.activeServiceRequest.id}/release-payment`,
         {
@@ -2768,13 +3115,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setState((current) => ({
         ...current,
         pins: remoteAppState.pins,
-        chats: releasedChatId
-          ? remoteAppState.chats.filter((chat) => chat.id !== releasedChatId)
-          : remoteAppState.chats,
-        activeChatId:
-          current.activeChatId && current.activeChatId === releasedChatId
-            ? null
-            : current.activeChatId,
+        chats: remoteAppState.chats,
+        activeChatId: current.activeChatId,
         activeServiceRequest: remoteAppState.activeServiceRequest,
       }));
 
@@ -3176,6 +3518,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const reopenChat = async (chatId: string): Promise<Result> => {
+    const chat = state.chats.find((item) => item.id === chatId) ?? null;
+
+    if (!isServerBackedChat(chat) || !state.sessionToken) {
+      return {
+        ok: false,
+        error: "Essa conversa não está conectada ao servidor. Atualize seus chats e tente novamente.",
+      };
+    }
+
+    try {
+      const data = await apiRequest<{ chat: ChatThread }>(
+        `/api/chats/${encodeURIComponent(chatId)}/reopen`,
+        {
+          method: "POST",
+          token: state.sessionToken,
+        }
+      );
+
+      setState((current) => ({
+        ...current,
+        activeChatId: chatId,
+        chats: upsertChatList(current.chats, hydrateChat(data.chat)),
+      }));
+
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Não conseguimos reabrir esta conversa agora.",
+      };
+    }
+  };
+
   const withErrorToast =
     <Args extends unknown[], R extends Result>(action: (...args: Args) => Promise<R>) =>
     async (...args: Args): Promise<R> => {
@@ -3197,6 +3576,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         state,
         login: withErrorToast(login),
         completeGoogleLogin: withErrorToast(completeGoogleLogin),
+        verifyDeviceLogin: withErrorToast(verifyDeviceLogin),
+        cancelDeviceVerification,
         logout,
         deleteAccount: withErrorToast(deleteAccount),
         register: withErrorToast(register),
@@ -3204,6 +3585,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         completeVerification: withErrorToast(completeVerification),
         finishProfileSetup: withErrorToast(finishProfileSetup),
         updateProfile: withErrorToast(updateProfile),
+        submitProviderVerification: withErrorToast(submitProviderVerification),
         verifyCpf: withErrorToast(verifyCpf),
         addPost: withErrorToast(addPost),
         removePost: withErrorToast(removePost),
@@ -3222,6 +3604,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         markServicePaid: withErrorToast(markServicePaid),
         markWorkerArrived: withErrorToast(markWorkerArrived),
         openServiceDispute: withErrorToast(openServiceDispute),
+        reportProviderNoShow: withErrorToast(reportProviderNoShow),
+        respondProviderNoShow: withErrorToast(respondProviderNoShow),
         releaseServicePayment: withErrorToast(releaseServicePayment),
         listCompletedServiceRequests,
         refreshSessionState: withErrorToast(refreshSessionState),
@@ -3236,6 +3620,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         startServiceFromChat: withErrorToast(startServiceFromChat),
         clearActiveChat,
         declineContactRequest: withErrorToast(declineContactRequest),
+        reopenChat: withErrorToast(reopenChat),
         removeChatThread,
         reportChatConduct: withErrorToast(reportChatConduct),
         sendMessage: withErrorToast(sendMessage),

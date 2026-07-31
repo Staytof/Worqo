@@ -10,7 +10,7 @@ import {
 import { apiRequest } from "../api/client";
 import { isNativeAppRuntime } from "./nativeRuntime";
 
-const PUSH_CHANNEL_ID = "worqo-general-v2";
+const PUSH_CHANNEL_ID = "worqo-general-v3-sound";
 const PUSH_TOKEN_STORAGE_KEY = "worqo-native-fcm-token-v1";
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [0, 2_000, 8_000, 30_000];
 

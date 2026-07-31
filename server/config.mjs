@@ -28,6 +28,12 @@ const configuredClientOrigins = String(process.env.CLIENT_ORIGIN ?? "")
   .map((origin) => normalizeOrigin(origin))
   .filter((origin) => origin && origin !== "*");
 const configuredRequiredClientRelease = normalizeEnvValue(process.env.REQUIRED_CLIENT_RELEASE);
+const deviceVerificationExemptEmails = String(
+  process.env.DEVICE_VERIFICATION_EXEMPT_EMAILS ?? ""
+)
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter((email) => email && email.includes("@"));
 const configuredFcmProjectId = normalizeEnvValue(
   process.env.FCM_PROJECT_ID ?? process.env.FIREBASE_PROJECT_ID
 );
@@ -59,6 +65,7 @@ export const config = {
   requiredClientRelease:
     configuredRequiredClientRelease ||
     (process.env.NODE_ENV === "production" ? "20260324-releasegate" : ""),
+  deviceVerificationExemptEmails: Array.from(new Set(deviceVerificationExemptEmails)),
   support: {
     email: normalizeEnvValue(process.env.SUPPORT_EMAIL),
     whatsapp: normalizeEnvValue(process.env.SUPPORT_WHATSAPP),

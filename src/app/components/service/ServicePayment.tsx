@@ -448,7 +448,7 @@ export function ServicePayment() {
             </div>
             <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3">
               <span className="text-sm font-medium text-slate-500">
-                Taxa fixa
+                Taxa de intermediação Worko
               </span>
               <span className="text-sm font-semibold text-slate-900">
                 {formatCurrencyAmount(asaasFeeAmount)}
