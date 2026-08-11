@@ -2,7 +2,7 @@ import { LocalNotifications } from "@capacitor/local-notifications";
 import type { AppNotification } from "../types";
 import { isNativeAppRuntime } from "./nativeRuntime";
 
-const CHANNEL_ID = "worqo-general-v3-sound";
+const CHANNEL_ID = "worko-general-v5-external";
 const DELIVERED_IDS_STORAGE_KEY = "worqo-native-delivered-notification-ids-v1";
 const MAX_STORED_DELIVERED_IDS = 200;
 const MAX_NATIVE_BODY_LENGTH = 140;
@@ -175,7 +175,6 @@ export async function requestNativeNotificationPermission() {
       importance: 5,
       visibility: 1,
       vibration: true,
-      sound: "default",
     }).catch(() => undefined);
     return true;
   }
@@ -193,7 +192,6 @@ export async function requestNativeNotificationPermission() {
     importance: 5,
     visibility: 1,
     vibration: true,
-    sound: "default",
   }).catch(() => undefined);
 
   return true;
@@ -236,8 +234,7 @@ export async function deliverNativeNotifications(notifications: AppNotification[
           allowWhileIdle: true,
         },
         channelId: CHANNEL_ID,
-        sound: "default",
-        smallIcon: "ic_launcher",
+        smallIcon: "ic_stat_worko",
         largeIcon:
           notification.kind === "chat-message" || notification.kind === "chat-request"
             ? notification.avatar ?? undefined

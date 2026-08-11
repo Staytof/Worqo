@@ -10,7 +10,7 @@ import {
 import { apiRequest } from "../api/client";
 import { isNativeAppRuntime } from "./nativeRuntime";
 
-const PUSH_CHANNEL_ID = "worqo-general-v3-sound";
+const PUSH_CHANNEL_ID = "worko-general-v5-external";
 const PUSH_TOKEN_STORAGE_KEY = "worqo-native-fcm-token-v1";
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [0, 2_000, 8_000, 30_000];
 
@@ -105,7 +105,6 @@ export async function initializeNativePushNotifications({
     importance: 5,
     visibility: 1,
     vibration: true,
-    sound: "default",
   }).catch(() => undefined);
 
   const permissions = await PushNotifications.requestPermissions().catch(() => null);
@@ -157,9 +156,10 @@ export async function initializeNativePushNotifications({
 
     if (storedToken) {
       void registerTokenWithRetry(storedToken);
-      return;
     }
 
+    // Sempre solicita o token atual ao Firebase. O token salvo localmente pode
+    // ter sido rotacionado ou invalidado depois de uma atualização/reinstalação.
     void PushNotifications.register().catch((error) => {
       console.warn("Não foi possível registrar este aparelho para notificações.", error);
     });

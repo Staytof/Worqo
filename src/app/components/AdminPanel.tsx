@@ -8,11 +8,13 @@ import {
   LayoutDashboard,
   LogOut,
   MapPinned,
+  MessageSquareText,
   RefreshCcw,
   Search,
   ServerCog,
   ShieldCheck,
   Smartphone,
+  Trash2,
   Users,
   Wallet,
   type LucideIcon,
@@ -36,6 +38,7 @@ import {
 import type {
   AdminDashboard,
   AdminHealthSnapshot,
+  AdminMonitoredChat,
   AdminProviderVerificationRecord,
   AdminServiceRequestRecord,
   AdminUserRecord,
@@ -44,7 +47,7 @@ import { formatCurrencyAmount, getInitials } from "../utils/helpers";
 import { AdminSupportDesk } from "./admin/AdminSupportDesk";
 import { BrandSplash } from "./BrandSplash";
 
-type AdminSection = "overview" | "map" | "verification" | "users" | "requests" | "wallet" | "system" | "support";
+type AdminSection = "overview" | "map" | "verification" | "users" | "requests" | "chats" | "wallet" | "system" | "support";
 type RequestTab = "all" | "map" | "live" | "disputes";
 type UserTab = "all" | "new" | "verified" | "pending";
 type VerificationTab = "review" | "waiting" | "approved" | "rejected" | "all";
@@ -73,6 +76,7 @@ const adminSections: Array<{ id: AdminSection; label: string; icon: LucideIcon }
   { id: "verification", label: "Verificações", icon: FileCheck2 },
   { id: "users", label: "Usuários(as)", icon: Users },
   { id: "requests", label: "Pedidos", icon: Smartphone },
+  { id: "chats", label: "Chats ativos", icon: MessageSquareText },
   { id: "wallet", label: "Carteira", icon: Wallet },
   { id: "system", label: "Sistema", icon: ServerCog },
   { id: "support", label: "SAC", icon: Headset },
@@ -144,6 +148,7 @@ export function AdminPanel() {
   const [resolutionNote, setResolutionNote] = useState<Record<string, string>>({});
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [userPendingDeletion, setUserPendingDeletion] = useState<AdminUserRecord | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   useErrorToast(error);
 
@@ -266,6 +271,31 @@ export function AdminPanel() {
       await loadDashboard("refresh");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Não conseguimos atualizar este usuário agora.");
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!sessionToken || !userPendingDeletion || updatingUserId) return;
+
+    const target = userPendingDeletion;
+    setUpdatingUserId(target.id);
+    setError("");
+
+    try {
+      await apiRequest(`/api/admin/users/${encodeURIComponent(target.id)}`, {
+        method: "DELETE",
+        token: sessionToken,
+      });
+      setUserPendingDeletion(null);
+      await loadDashboard("refresh");
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Não conseguimos excluir este usuário agora."
+      );
     } finally {
       setUpdatingUserId(null);
     }
@@ -414,6 +444,7 @@ export function AdminPanel() {
             onUserTabChange={setUserTab}
             onSearchChange={setUserSearch}
             onAdminAction={handleAdminUserAction}
+            onDeleteUser={setUserPendingDeletion}
             onExport={() =>
               exportCsv("worko-usuarios.csv", [
                 ["Nome", "E-mail", "Telefone", "Criado em", "E-mail verificado", "CPF verificado", "Perfil completo", "Suspenso", "Sinalizado"],
@@ -431,6 +462,53 @@ export function AdminPanel() {
               ])
             }
           />
+        ) : null}
+
+        {userPendingDeletion ? (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-user-title"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+          >
+            <div className="w-full max-w-md rounded-2xl border border-rose-500/30 bg-slate-950 p-5 shadow-2xl shadow-black/50">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-rose-500/15 text-rose-300">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <h2 id="delete-user-title" className="mt-4 text-xl font-bold text-white">
+                Excluir usuário(a)?
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                A conta de <strong className="text-white">{userPendingDeletion.fullName}</strong> será
+                encerrada, os dados pessoais serão removidos, todas as sessões serão revogadas e o e-mail
+                <strong className="text-white"> {userPendingDeletion.email}</strong> ficará bloqueado
+                permanentemente para novos cadastros.
+              </p>
+              <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">
+                Registros financeiros e operacionais obrigatórios permanecem anonimizados. A exclusão não é
+                permitida enquanto houver saldo ou saque pendente.
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  disabled={updatingUserId === userPendingDeletion.id}
+                  onClick={() => setUserPendingDeletion(null)}
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm font-semibold text-slate-200 disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={updatingUserId === userPendingDeletion.id}
+                  onClick={() => void handleDeleteUser()}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-400/40 bg-rose-500/20 px-4 py-2.5 text-sm font-semibold text-rose-50 disabled:opacity-60"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {updatingUserId === userPendingDeletion.id ? "Excluindo..." : "Excluir conta"}
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {activeSection === "requests" ? (
@@ -462,6 +540,10 @@ export function AdminPanel() {
               ])
             }
           />
+        ) : null}
+
+        {activeSection === "chats" ? (
+          <ActiveChatsSection chats={dashboard?.activeChats ?? []} />
         ) : null}
 
         {activeSection === "wallet" ? <WalletSection withdrawals={dashboard?.withdrawals ?? []} /> : null}
@@ -973,6 +1055,7 @@ function UsersSection({
   onUserTabChange,
   onSearchChange,
   onAdminAction,
+  onDeleteUser,
   onExport,
 }: {
   users: AdminUserRecord[];
@@ -987,6 +1070,7 @@ function UsersSection({
     action: "flag" | "clear-flag" | "suspend" | "reinstate",
     reason: string
   ) => Promise<void>;
+  onDeleteUser: (user: AdminUserRecord) => void;
   onExport: () => void;
 }) {
   return (
@@ -1032,6 +1116,7 @@ function UsersSection({
                 entry={entry}
                 isBusy={updatingUserId === entry.id}
                 onAdminAction={onAdminAction}
+                onDeleteUser={onDeleteUser}
               />
             ))
           ) : (
@@ -1106,6 +1191,88 @@ function RequestsSection({
           <EmptyPanel text="Nenhum pedido neste filtro." />
         )}
       </div>
+    </section>
+  );
+}
+
+function ActiveChatsSection({ chats }: { chats: AdminMonitoredChat[] }) {
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(chats[0]?.id ?? null);
+  const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? chats[0] ?? null;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+      <div className="border-b border-slate-800 p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-300">Monitoramento</p>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-white">Chats ativos agora</h2>
+          <span className="rounded-full bg-blue-500/15 px-3 py-1 text-xs font-bold text-blue-200">
+            {chats.length} ativo{chats.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-slate-400">Leitura administrativa para segurança e moderação.</p>
+      </div>
+
+      {chats.length === 0 ? (
+        <EmptyPanel text="Nenhum chat ativo neste momento." />
+      ) : (
+        <div className="grid min-h-[560px] md:grid-cols-[320px_1fr]">
+          <div className="max-h-[70vh] overflow-y-auto border-r border-slate-800 p-2 custom-scrollbar">
+            {chats.map((chat) => {
+              const lastMessage = chat.messages.at(-1);
+              const selected = selectedChat?.id === chat.id;
+
+              return (
+                <button
+                  key={chat.id}
+                  type="button"
+                  onClick={() => setSelectedChatId(chat.id)}
+                  className={`mb-1 w-full rounded-xl border p-3 text-left transition ${
+                    selected
+                      ? "border-blue-500/60 bg-blue-500/10"
+                      : "border-transparent bg-slate-900 hover:border-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="truncate text-sm text-white">{chat.requesterName} ↔ {chat.workerName}</strong>
+                    <span className="shrink-0 text-[10px] text-slate-500">{formatDate(chat.updatedAt, true)}</span>
+                  </div>
+                  <p className="mt-1 truncate text-xs font-semibold text-blue-300">{chat.category} · {chat.status}</p>
+                  <p className="mt-1 truncate text-xs text-slate-400">{lastMessage?.body || "Aguardando primeira mensagem"}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedChat ? (
+            <div className="flex min-h-0 flex-col bg-slate-900">
+              <header className="border-b border-slate-800 px-4 py-3">
+                <h3 className="font-bold text-white">{selectedChat.requesterName} e {selectedChat.workerName}</h3>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {selectedChat.kind === "service" ? "Atendimento" : "Conversa de divulgação"} · {selectedChat.description}
+                </p>
+              </header>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 custom-scrollbar">
+                {selectedChat.messages.length > 0 ? selectedChat.messages.map((message) => (
+                  <article key={message.id} className="max-w-[82%] rounded-2xl bg-slate-800 px-3.5 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <strong className="text-xs text-blue-300">{message.senderName}</strong>
+                      <span className="text-[10px] text-slate-500">{formatDate(message.createdAt, true)}</span>
+                    </div>
+                    {message.messageType === "image" && message.imageUrl ? (
+                      <a href={message.imageUrl} target="_blank" rel="noreferrer" className="mt-2 block">
+                        <img src={message.imageUrl} alt="Imagem enviada no chat" className="max-h-52 rounded-xl object-contain" />
+                      </a>
+                    ) : null}
+                    {message.body ? <p className="mt-1 break-words text-sm leading-5 text-slate-100">{message.body}</p> : null}
+                  </article>
+                )) : (
+                  <p className="py-12 text-center text-sm text-slate-500">A conversa ainda não possui mensagens.</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }
@@ -1322,6 +1489,7 @@ function UserRow({
   entry,
   isBusy,
   onAdminAction,
+  onDeleteUser,
 }: {
   entry: AdminUserRecord;
   isBusy: boolean;
@@ -1330,6 +1498,7 @@ function UserRow({
     action: "flag" | "clear-flag" | "suspend" | "reinstate",
     reason: string
   ) => Promise<void>;
+  onDeleteUser: (user: AdminUserRecord) => void;
 }) {
   const [reason, setReason] = useState("");
 
@@ -1383,6 +1552,15 @@ function UserRow({
             {entry.isSuspended ? "Reativar" : "Suspender"}
           </button>
         </div>
+        <button
+          type="button"
+          disabled={isBusy || entry.isAdmin}
+          onClick={() => onDeleteUser(entry)}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-rose-600/50 bg-rose-950/50 px-2 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-900/60 disabled:opacity-60"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Excluir usuário(a)
+        </button>
       </div>
     </div>
   );

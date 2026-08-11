@@ -42,6 +42,9 @@ import {
   getSessionUser,
   completeUserAppTour,
   completeGoogleOAuthLogin,
+  cancelGoogleOAuthLogin,
+  consumeGoogleOAuthExchange,
+  createGoogleOAuthExchange,
   createGoogleOAuthStartUrl,
   deleteUserAccount,
   loginUser,
@@ -180,6 +183,27 @@ function buildGoogleAuthReturnUrl(params, returnTo = "") {
   return returnUrl.toString();
 }
 
+function sendSecureGoogleAuthBridge(response, returnUrl) {
+  const nonce = createId().replace(/-/g, "");
+  const serializedReturnUrl = JSON.stringify(returnUrl).replace(/</g, "\\u003c");
+
+  response.writeHead(200, {
+    ...response.getHeaders(),
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Content-Type": "text/html; charset=utf-8",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'`,
+  });
+  response.end(`<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voltando ao Worko</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f8fafc;color:#0f172a;font:600 16px system-ui,sans-serif}.card{max-width:320px;padding:28px;text-align:center}.dot{width:42px;height:42px;margin:0 auto 16px;border:4px solid #dbeafe;border-top-color:#2563eb;border-radius:999px;animation:s .8s linear infinite}@keyframes s{to{transform:rotate(360deg)}}p{color:#64748b;font-size:14px;line-height:1.5}</style></head>
+<body><main class="card"><div class="dot"></div><strong>Voltando ao Worko</strong><p>O endereço desta autorização foi removido por segurança.</p></main>
+<script nonce="${nonce}">history.replaceState(null,"","/api/auth/google/complete");location.replace(${serializedReturnUrl});setTimeout(function(){window.close()},900);</script></body></html>`);
+}
+
 function applyChatRateLimit(request) {
   const clientIp = getClientIp(request);
   assertRateLimit("chat", clientIp, {
@@ -276,7 +300,8 @@ function assertSupportedClientRelease(request, pathname) {
     pathname === "/api/asaas/webhook" ||
     pathname.startsWith("/api/push-media/") ||
     pathname === "/api/auth/google/start" ||
-    pathname === "/api/auth/google/callback"
+    pathname === "/api/auth/google/callback" ||
+    pathname === "/api/auth/google/exchange"
   ) {
     return;
   }
@@ -497,6 +522,7 @@ const server = http.createServer(async (request, response) => {
           timezone: url.searchParams.get("timezone") || "",
           loginLocation: url.searchParams.get("loginLocation") || "",
           loginIp: getClientIp(request),
+          flowVersion: url.searchParams.get("flowVersion") || "1",
         });
         redirect(response, googleUrl);
       } catch (error) {
@@ -515,18 +541,56 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/auth/google/exchange") {
+      applyAuthRateLimit(request, "google-exchange");
+      const body = await readJsonBody(request, SMALL_JSON_BODY_OPTIONS);
+      const session = consumeGoogleOAuthExchange(body.exchange);
+      json(response, 200, session);
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/auth/google/callback") {
       applyAuthRateLimit(request, "google-callback");
+      const oauthState = url.searchParams.get("state");
+      const providerError = url.searchParams.get("error");
 
       try {
+        if (providerError) {
+          const cancelled = cancelGoogleOAuthLogin(oauthState);
+          const cancelledUrl = buildGoogleAuthReturnUrl(
+            { googleCancelled: "1" },
+            cancelled.returnTo
+          );
+
+          if (cancelled.flowVersion >= 2 && cancelledUrl.startsWith("com.worqo.app:")) {
+            sendSecureGoogleAuthBridge(response, cancelledUrl);
+          } else {
+            redirect(response, cancelledUrl);
+          }
+          return;
+        }
+
         const session = await completeGoogleOAuthLogin({
           code: url.searchParams.get("code"),
-          state: url.searchParams.get("state"),
+          state: oauthState,
         });
 
-        redirect(
-          response,
-          buildGoogleAuthReturnUrl({
+        if (session.flowVersion >= 2) {
+          const exchange = createGoogleOAuthExchange(session);
+          const returnUrl = buildGoogleAuthReturnUrl(
+            { googleExchange: exchange.exchange },
+            exchange.returnTo
+          );
+
+          if (returnUrl.startsWith("com.worqo.app:")) {
+            sendSecureGoogleAuthBridge(response, returnUrl);
+          } else {
+            redirect(response, returnUrl);
+          }
+          return;
+        }
+
+        redirect(response, buildGoogleAuthReturnUrl({
             googleToken: session.token || undefined,
             googlePending: session.pendingVerification
               ? JSON.stringify(session.pendingVerification)
@@ -535,8 +599,7 @@ const server = http.createServer(async (request, response) => {
               ? JSON.stringify(session.pendingDeviceVerification)
               : undefined,
             googleRemember: session.rememberMe ? "1" : "0",
-          }, session.returnTo)
-        );
+          }, session.returnTo));
       } catch (error) {
         const message =
           error instanceof Error
@@ -1065,6 +1128,21 @@ const server = http.createServer(async (request, response) => {
         reason: body.reason,
       });
       json(response, 200, { user: updatedUser });
+      return;
+    }
+
+    const adminUserDeleteMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+
+    if (request.method === "DELETE" && adminUserDeleteMatch) {
+      const { user: adminUser } = requireAdminSessionUser(request);
+      const targetUserId = decodeURIComponent(adminUserDeleteMatch[1]);
+
+      if (targetUserId === adminUser.id) {
+        throw new HttpError(409, "A conta administradora conectada não pode excluir a si mesma.");
+      }
+
+      const result = deleteUserAccount(targetUserId, { reason: "admin-deleted" });
+      json(response, 200, result);
       return;
     }
 

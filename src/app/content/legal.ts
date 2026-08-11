@@ -105,7 +105,7 @@ export const termsOfUseSections: LegalSection[] = [
       "É proibido usar o app para golpes, lavagem de dinheiro, falsidade ideológica, assédio, phishing, spam, pirâmide, cobrança indevida ou qualquer atividade ilícita.",
       "É proibido enviar telefone, e-mail, redes sociais, links, chaves de contato ou sequências numéricas camufladas com o objetivo de tirar a negociação, o suporte ou o pagamento para fora do Worko.",
       "Clientes podem fotografar pelo próprio chat o estado atual do serviço. O chat não permite escolher imagens antigas da galeria, e as fotos capturadas também podem ser monitoradas para segurança, moderação e análise de disputas.",
-      "O chat do atendimento é bloqueado quando o serviço é concluído. Cliente ou Prestador(a) pode reabrir a conversa pelo próprio atendimento quando precisar tratar novamente daquele serviço.",
+      "O chat de um atendimento pago é bloqueado quando o serviço é encerrado e permanece em Arquivadas somente como histórico. Uma nova necessidade exige um novo atendimento e um novo chat; a conversa antiga não pode ser reaberta.",
       "O SAC online segue fila de atendimento por ordem de chegada, pode exibir a quantidade de pessoas à frente e pode ser encerrado pelo(a) próprio(a) usuário(a) ou pelo atendimento quando o caso for concluído.",
       "O Worko pode remover publicações, ocultar conteúdo, limitar mensagens, congelar funcionalidades, encerrar tickets e suspender contas quando identificar descumprimento destes termos, risco, fraude ou ordem legal.",
     ],

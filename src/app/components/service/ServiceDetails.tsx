@@ -428,7 +428,6 @@ export function ServiceDetails() {
                 placeholder="Mínimo R$ 50,00"
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:bg-white"
               />
-              <p className="text-xs font-medium text-slate-500">Valor mínimo: R$ 50,00.</p>
             </label>
 
             <label className="space-y-2">

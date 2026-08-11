@@ -138,6 +138,15 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS oauth_login_results (
+    id TEXT PRIMARY KEY,
+    exchange_hash TEXT NOT NULL UNIQUE,
+    result_json TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS service_requests (
     id TEXT PRIMARY KEY,
     requester_user_id TEXT NOT NULL,
@@ -631,6 +640,7 @@ ensureOauthLoginStateColumn("device_platform", "TEXT");
 ensureOauthLoginStateColumn("timezone", "TEXT");
 ensureOauthLoginStateColumn("login_ip", "TEXT");
 ensureOauthLoginStateColumn("login_location", "TEXT");
+ensureOauthLoginStateColumn("flow_version", "INTEGER NOT NULL DEFAULT 1");
 ensureTableColumn("sessions", "device_id", "TEXT");
 ensureTableColumn("sessions", "device_label", "TEXT");
 ensureTableColumn("sessions", "device_platform", "TEXT");
@@ -705,6 +715,7 @@ ensureServiceRequestColumn("refunded_at", "TEXT");
 ensureServiceRequestColumn("wallet_available_at", "TEXT");
 ensureCommunityPostColumn("profession", "TEXT");
 ensureCommunityPostColumn("experience", "TEXT");
+ensureCommunityPostColumn("hourly_rate_cents", "INTEGER");
 ensureCommunityPostColumn("duration_days", "INTEGER");
 ensureCommunityPostColumn("expires_at", "TEXT");
 ensureCommunityPostColumn("latitude", "REAL");
@@ -831,6 +842,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS oauth_login_states_provider_state_idx
   ON oauth_login_states (provider, state_hash, consumed_at);
 
+  CREATE INDEX IF NOT EXISTS oauth_login_results_exchange_idx
+  ON oauth_login_results (exchange_hash, consumed_at, expires_at);
+
   CREATE INDEX IF NOT EXISTS service_requests_asaas_payment_idx
   ON service_requests (asaas_payment_id);
 
@@ -946,6 +960,14 @@ db.prepare(
 db.prepare(
   `
     DELETE FROM oauth_login_states
+    WHERE consumed_at IS NOT NULL
+       OR expires_at < ?
+  `
+).run(nowTimestamp);
+
+db.prepare(
+  `
+    DELETE FROM oauth_login_results
     WHERE consumed_at IS NOT NULL
        OR expires_at < ?
   `

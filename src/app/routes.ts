@@ -6,6 +6,7 @@ import { AdminPanel } from "./components/AdminPanel";
 import { AuthLayout } from "./components/AuthLayout";
 import { ChatList } from "./components/ChatList";
 import { ClientOrders } from "./components/ClientOrders";
+import { CurrentServiceInfo } from "./components/CurrentServiceInfo";
 import { Home } from "./components/Home";
 import { LegalPage } from "./components/LegalPage";
 import { Login } from "./components/Login";
@@ -18,6 +19,7 @@ import { ProfileLegal } from "./components/ProfileLegal";
 import { ProfileManual } from "./components/ProfileManual";
 import { ProfileSetup } from "./components/ProfileSetup";
 import { ProfileSupport } from "./components/ProfileSupport";
+import { SupportChat } from "./components/SupportChat";
 import { ProviderReviewStatus } from "./components/ProviderReviewStatus";
 import { ProviderVerification } from "./components/ProviderVerification";
 import { Register } from "./components/Register";
@@ -67,11 +69,13 @@ export const router = createBrowserRouter([
       { path: "notifications", Component: Notifications },
       { path: "profile", Component: Profile },
       { path: "wallet", Component: Wallet },
+      { path: "current-service", Component: CurrentServiceInfo },
       { path: "admin", Component: AdminRouteRedirect },
       { path: "profile/data", Component: ProfileAccount },
       { path: "profile/manual", Component: ProfileManual },
       { path: "profile/legal", Component: ProfileLegal },
       { path: "profile/support", Component: ProfileSupport },
+      { path: "profile/support/:ticketId", Component: SupportChat },
       { path: "service/details", Component: ServiceDetails },
       { path: "service/request", Component: ServiceRequestStatus },
       { path: "service/waiting", Component: ServiceWaiting },

@@ -6,6 +6,7 @@ import {
 } from "@capacitor/camera";
 import {
   ArrowLeft,
+  Archive,
   Camera,
   Check,
   CheckCheck,
@@ -232,13 +233,13 @@ export function ChatList() {
     deleteActiveServiceRequest,
     declineContactRequest,
     openChat,
-    reopenChat,
     removeChatThread,
     reportChatConduct,
     sendMessage,
     startServiceFromChat,
   } = useApp();
   const [searchQuery, setSearchQuery] = useState("");
+  const [showArchivedChats, setShowArchivedChats] = useState(false);
   const [message, setMessage] = useState("");
   const [isClosingDealOpen, setIsClosingDealOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -256,7 +257,6 @@ export function ChatList() {
   const [isConfirmingDetails, setIsConfirmingDetails] = useState(false);
   const [isDeletingService, setIsDeletingService] = useState(false);
   const [isStartingService, setIsStartingService] = useState(false);
-  const [isReopeningChat, setIsReopeningChat] = useState(false);
   const [revealedChatId, setRevealedChatId] = useState<string | null>(null);
   const [chatDeleteConfirmationId, setChatDeleteConfirmationId] = useState<string | null>(null);
   const [contactRequestAction, setContactRequestAction] = useState<"accept" | "decline" | null>(
@@ -277,7 +277,9 @@ export function ChatList() {
       chat.messages.length > 0 ||
       chat.id === activeChatId
   );
-  const filteredChats = visibleChats.filter((chat) => {
+  const archivedChats = visibleChats.filter((chat) => chat.isArchived);
+  const activeChats = visibleChats.filter((chat) => !chat.isArchived);
+  const filteredChats = (showArchivedChats ? archivedChats : activeChats).filter((chat) => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     const lastMessage = getLastItem(chat.messages)?.text.toLowerCase() ?? "";
 
@@ -332,21 +334,6 @@ export function ChatList() {
     }
 
     setMessage("");
-  };
-
-  const handleReopenChat = async () => {
-    if (!activeChat || !activeChat.isLocked || isReopeningChat) {
-      return;
-    }
-
-    setIsReopeningChat(true);
-    setMessageError("");
-    const result = await reopenChat(activeChat.id);
-    setIsReopeningChat(false);
-
-    if (!result.ok) {
-      setMessageError(result.error ?? "Não conseguimos reabrir esta conversa agora.");
-    }
   };
 
   const handleSendImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -630,13 +617,13 @@ export function ChatList() {
       >
         <div className="shrink-0 bg-white px-5 pb-2 pt-6 sm:px-6">
           <h1 className="text-[22px] font-bold leading-tight text-neutral-900">
-            Conversas
+            {showArchivedChats ? "Conversas arquivadas" : "Conversas"}
           </h1>
 
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-3 custom-scrollbar sm:px-6">
-          <div className="chat-search-shell mb-10 flex h-12 w-full items-center gap-3 rounded-2xl border border-neutral-200 bg-white px-4">
+          <div className="chat-search-shell mb-3 flex h-12 w-full items-center gap-3 rounded-2xl border border-neutral-200 bg-white px-4">
             <Search className="h-4 w-4 flex-shrink-0 text-neutral-400" />
             <input
               type="text"
@@ -646,6 +633,28 @@ export function ChatList() {
               className="chat-search-input h-full w-full border-none bg-transparent text-[14px] text-neutral-700 outline-none placeholder:text-neutral-400"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowArchivedChats((current) => !current);
+              setSearchQuery("");
+              clearActiveChat();
+            }}
+            className="mb-4 flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-sm transition active:scale-[0.99]"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+              <Archive className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1 text-sm font-bold text-slate-800">
+              {showArchivedChats ? "Voltar às conversas" : "Arquivadas"}
+            </span>
+            {!showArchivedChats && archivedChats.length > 0 ? (
+              <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-black text-white">
+                {archivedChats.length}
+              </span>
+            ) : null}
+          </button>
 
           {filteredChats.length > 0 ? (
             filteredChats.map((chat) => {
@@ -660,8 +669,8 @@ export function ChatList() {
                   <div className="relative">
                     <button
                       type="button"
-                      onClick={() => handleRemoveChat(chat.id)}
-                      className="absolute inset-y-2 right-5 flex w-20 items-center justify-center rounded-2xl bg-rose-600 text-white sm:right-6"
+                      onClick={() => !chat.isArchived && handleRemoveChat(chat.id)}
+                      className={`absolute inset-y-2 right-5 w-20 items-center justify-center rounded-2xl bg-rose-600 text-white sm:right-6 ${chat.isArchived ? "hidden" : "flex"}`}
                       aria-label={`Excluir conversa com ${chat.name}`}
                     >
                       <Trash2 className="h-5 w-5" />
@@ -673,7 +682,7 @@ export function ChatList() {
                         x: revealedChatId === chat.id ? -88 : 0,
                       }}
                       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                      drag="x"
+                      drag={chat.isArchived ? false : "x"}
                       dragConstraints={{ left: -96, right: 0 }}
                       dragElastic={0.08}
                       onDragEnd={(_, info) => {
@@ -1113,17 +1122,8 @@ export function ChatList() {
                     Chat bloqueado após a conclusão do serviço
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                    Para voltar a conversar com {activeChatDisplayName}, entre em contato novamente.
+                    Esta conversa permanece apenas como histórico. Para falar novamente com {activeChatDisplayName}, inicie um novo atendimento; o Worko criará um novo chat.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => void handleReopenChat()}
-                    disabled={isReopeningChat}
-                    className="mt-3 inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    {isReopeningChat ? "Entrando em contato..." : "Entrar em contato novamente"}
-                  </button>
                 </div>
               </div>
             ) : !isPendingProviderContact && !isPendingClientContact ? (

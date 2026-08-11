@@ -77,7 +77,7 @@ const clientSections: ManualSection[] = [
       "Use o chat para explicar o problema, enviar as informações permitidas e combinar escopo, materiais, prazo e condições antes de fechar.",
       "Não envie telefone, e-mail, redes sociais, links de pagamento ou dados bancários. Não pague por fora do Worko: isso elimina a proteção e o registro da plataforma.",
       "Se houver abuso, fraude, pressão para contato externo ou conduta inadequada, interrompa a conversa, guarde os registros e acione o SAC.",
-      "Após a conclusão do serviço, o chat é bloqueado. Cliente ou prestador pode usar “Entrar em contato novamente” para reabrir uma nova conversa quando necessário.",
+      "Após a conclusão de um serviço pago, o chat é bloqueado e vai para Arquivadas como histórico somente para leitura. Um novo contato exige um novo atendimento e cria outro chat.",
     ],
   },
   {
@@ -169,7 +169,7 @@ const providerSections: ManualSection[] = [
       "Use o chat para entender o pedido e alinhar escopo, materiais, prazo e condições. Não solicite telefone, redes sociais, e-mail, pagamento externo ou chave Pix.",
       "O cliente envia os detalhes finais com título, valor, data, horário, tolerância e local. Leia tudo e confirme somente se puder cumprir.",
       "O valor mínimo de um serviço é R$ 50,00. O valor acordado do serviço é o valor líquido previsto para o prestador; as taxas do cliente aparecem separadas no pagamento.",
-      "Depois da conclusão, o chat fica bloqueado. Use “Entrar em contato novamente” quando houver necessidade legítima de uma nova conversa.",
+      "Depois da conclusão de um serviço pago, o chat fica bloqueado em Arquivadas. Para uma nova necessidade, o cliente deve iniciar outro atendimento, que terá um chat novo.",
     ],
   },
   {

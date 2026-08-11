@@ -390,6 +390,19 @@ function hydratePost(post: Post): Post {
     isVerified: post.isVerified ?? seedPost?.isVerified ?? false,
     profession: post.profession ?? seedPost?.profession ?? "",
     experience: post.experience ?? post.content ?? seedPost?.experience ?? "",
+    hourlyRateCents:
+      post.hourlyRateCents === null || post.hourlyRateCents === undefined
+        ? seedPost?.hourlyRateCents ?? null
+        : Number(post.hourlyRateCents),
+    completedServicesCount: Number(
+      post.completedServicesCount ?? seedPost?.completedServicesCount ?? 0
+    ),
+    averageRating:
+      post.averageRating === null || post.averageRating === undefined
+        ? seedPost?.averageRating ?? null
+        : Number(post.averageRating),
+    reviewsCount: Number(post.reviewsCount ?? seedPost?.reviewsCount ?? 0),
+    authorUserId: post.authorUserId ?? seedPost?.authorUserId ?? null,
     durationDays: durationDays === null ? null : Number(durationDays),
     expiresAt: post.expiresAt ?? seedPost?.expiresAt ?? null,
     latitude: latitude === null ? null : Number(latitude),
@@ -424,6 +437,8 @@ function hydrateChat(chat: ChatThread): ChatThread {
     servicePreview: chat.servicePreview ?? seedChat?.servicePreview ?? null,
     serviceStatus: chat.serviceStatus ?? seedChat?.serviceStatus ?? null,
     isLocked: chat.isLocked ?? seedChat?.isLocked ?? false,
+    isArchived: chat.isArchived ?? seedChat?.isArchived ?? false,
+    wasPaid: chat.wasPaid ?? seedChat?.wasPaid ?? false,
     messages: (chat.messages ?? []).map((message) => ({
       ...message,
       messageType: message.messageType === "image" && message.imageUrl ? "image" : "text",

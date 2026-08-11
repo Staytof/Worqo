@@ -6,9 +6,14 @@ import { motion } from "motion/react";
 import { Link, useNavigate } from "react-router";
 import { Capacitor } from "@capacitor/core";
 import logoImg from "@/assets/logosup.png";
-import { resolveApiBaseUrl } from "../api/client";
+import { apiRequest, resolveApiBaseUrl } from "../api/client";
 import { useApp } from "../context/AppContext";
 import { getDeviceIdentity } from "../lib/deviceIdentity";
+import {
+  onSecureOAuthBrowserReturned,
+  openSecureOAuthBrowser,
+} from "../lib/secureOAuthBrowser";
+import type { PendingDeviceVerification, PendingVerification } from "../types";
 
 export function Login() {
   const navigate = useNavigate();
@@ -28,6 +33,7 @@ export function Login() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
   const processedGoogleCallbackRef = useRef("");
+  const googleFlowActiveRef = useRef(false);
 
   const completeGoogleCallback = useCallback(async (callbackUrl: string) => {
     if (!callbackUrl || processedGoogleCallbackRef.current === callbackUrl) {
@@ -46,16 +52,19 @@ export function Login() {
     }
 
     const params = callback.searchParams;
-    const googleToken = params.get("googleToken");
+    let googleToken = params.get("googleToken");
+    const googleExchange = params.get("googleExchange");
+    const googleCancelled = params.get("googleCancelled") === "1";
     const googlePendingRaw = params.get("googlePending");
     const googleDevicePendingRaw = params.get("googleDevicePending");
     const googleError = params.get("googleError");
 
-    if (!googleToken && !googlePendingRaw && !googleDevicePendingRaw && !googleError) {
+    if (!googleToken && !googleExchange && !googlePendingRaw && !googleDevicePendingRaw && !googleError && !googleCancelled) {
       return;
     }
 
     processedGoogleCallbackRef.current = callbackUrl;
+    googleFlowActiveRef.current = false;
 
     if (callback.protocol === "http:" || callback.protocol === "https:") {
       window.history.replaceState(null, "", window.location.pathname || "/");
@@ -68,10 +77,40 @@ export function Login() {
       return;
     }
 
-    let googlePending = null;
-    let googleDevicePending = null;
+    if (googleCancelled) {
+      setIsGoogleSubmitting(false);
+      setFeedback("");
+      return;
+    }
 
-    if (googlePendingRaw) {
+    let googlePending: PendingVerification | null = null;
+    let googleDevicePending: PendingDeviceVerification | null = null;
+
+    if (googleExchange) {
+      setIsGoogleSubmitting(true);
+      try {
+        const exchangeResult = await apiRequest<{
+          token?: string | null;
+          pendingVerification?: PendingVerification | null;
+          pendingDeviceVerification?: PendingDeviceVerification | null;
+          rememberMe?: boolean;
+        }>("/api/auth/google/exchange", {
+          method: "POST",
+          body: { exchange: googleExchange },
+        });
+        googleToken = exchangeResult.token ?? null;
+        googlePending = exchangeResult.pendingVerification ?? null;
+        googleDevicePending = exchangeResult.pendingDeviceVerification ?? null;
+        params.set("googleRemember", exchangeResult.rememberMe === false ? "0" : "1");
+      } catch (exchangeError) {
+        setIsGoogleSubmitting(false);
+        setFeedbackTone("error");
+        setFeedback(exchangeError instanceof Error ? exchangeError.message : "O retorno seguro do Google expirou. Tente novamente.");
+        return;
+      }
+    }
+
+    if (!googlePending && googlePendingRaw) {
       try {
         googlePending = JSON.parse(googlePendingRaw);
       } catch {
@@ -82,7 +121,7 @@ export function Login() {
       }
     }
 
-    if (googleDevicePendingRaw) {
+    if (!googleDevicePending && googleDevicePendingRaw) {
       try {
         googleDevicePending = JSON.parse(googleDevicePendingRaw);
       } catch {
@@ -141,14 +180,30 @@ export function Login() {
 
     let disposed = false;
     let removeListener: (() => Promise<void>) | undefined;
+    let removeBrowserFinishedListener: (() => Promise<void>) | undefined;
+    let removeSecureBrowserReturnedListener: (() => Promise<void>) | undefined;
+    let removeAppStateListener: (() => Promise<void>) | undefined;
+    let browserMadeAppInactive = false;
+    let returnTimer: number | null = null;
 
     const receiveGoogleReturn = async ({ url }: URLOpenListenerEvent) => {
       if (!url.startsWith("com.worqo.app://auth/google")) {
         return;
       }
 
+      googleFlowActiveRef.current = false;
       await Browser.close().catch(() => undefined);
       await completeGoogleCallback(url);
+    };
+
+    const releaseCancelledGoogleFlow = () => {
+      if (!googleFlowActiveRef.current) {
+        return;
+      }
+
+      googleFlowActiveRef.current = false;
+      setIsGoogleSubmitting(false);
+      setFeedback("");
     };
 
     void App.addListener("appUrlOpen", receiveGoogleReturn).then((listener) => {
@@ -157,6 +212,43 @@ export function Login() {
         return;
       }
       removeListener = () => listener.remove();
+    });
+
+    void Browser.addListener("browserFinished", releaseCancelledGoogleFlow).then((listener) => {
+      if (disposed) {
+        void listener.remove();
+        return;
+      }
+      removeBrowserFinishedListener = () => listener.remove();
+    });
+
+    void onSecureOAuthBrowserReturned(() => {
+      if (returnTimer !== null) window.clearTimeout(returnTimer);
+      returnTimer = window.setTimeout(releaseCancelledGoogleFlow, 700);
+    }).then((listener) => {
+      if (disposed) {
+        void listener.remove();
+        return;
+      }
+      removeSecureBrowserReturnedListener = () => listener.remove();
+    });
+
+    void App.addListener("appStateChange", ({ isActive }) => {
+      if (!isActive && googleFlowActiveRef.current) {
+        browserMadeAppInactive = true;
+        return;
+      }
+
+      if (isActive && browserMadeAppInactive && googleFlowActiveRef.current) {
+        if (returnTimer !== null) window.clearTimeout(returnTimer);
+        returnTimer = window.setTimeout(releaseCancelledGoogleFlow, 500);
+      }
+    }).then((listener) => {
+      if (disposed) {
+        void listener.remove();
+        return;
+      }
+      removeAppStateListener = () => listener.remove();
     });
 
     void App.getLaunchUrl().then((launchUrl) => {
@@ -169,6 +261,18 @@ export function Login() {
       disposed = true;
       if (removeListener) {
         void removeListener();
+      }
+      if (removeBrowserFinishedListener) {
+        void removeBrowserFinishedListener();
+      }
+      if (removeSecureBrowserReturnedListener) {
+        void removeSecureBrowserReturnedListener();
+      }
+      if (removeAppStateListener) {
+        void removeAppStateListener();
+      }
+      if (returnTimer !== null) {
+        window.clearTimeout(returnTimer);
       }
     };
   }, [completeGoogleCallback]);
@@ -207,9 +311,12 @@ export function Login() {
   const handleGoogleLogin = async () => {
     setFeedback("");
     setIsGoogleSubmitting(true);
+    processedGoogleCallbackRef.current = "";
+    googleFlowActiveRef.current = true;
     const baseUrl = resolveApiBaseUrl();
     const params = new URLSearchParams({
       rememberMe: rememberMe ? "true" : "false",
+      flowVersion: "2",
     });
     const deviceIdentity = getDeviceIdentity();
 
@@ -220,10 +327,13 @@ export function Login() {
     if (Capacitor.isNativePlatform()) {
       params.set("returnTo", "com.worqo.app://auth/google");
       try {
-        await Browser.open({
-          url: `${baseUrl}/api/auth/google/start?${params.toString()}`,
-        });
+        await openSecureOAuthBrowser(`${baseUrl}/api/auth/google/start?${params.toString()}`);
+        // A aba segura cobre o app enquanto o usuário escolhe uma conta. Não
+        // mantenha o botão bloqueado aguardando um evento de fechamento, pois
+        // alguns navegadores Android não enviam esse evento ao cancelar.
+        setIsGoogleSubmitting(false);
       } catch {
+        googleFlowActiveRef.current = false;
         setIsGoogleSubmitting(false);
         setFeedbackTone("error");
         setFeedback("Não conseguimos abrir o login do Google. Tente novamente.");
@@ -231,6 +341,7 @@ export function Login() {
       return;
     }
 
+    googleFlowActiveRef.current = false;
     window.location.assign(`${baseUrl}/api/auth/google/start?${params.toString()}`);
   };
 

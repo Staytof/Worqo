@@ -162,9 +162,15 @@ export function ProviderVerification() {
 
 function DocumentButton({ icon: Icon, title, subtitle, image, onClick }: { icon: typeof Camera; title: string; subtitle: string; image: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="overflow-hidden rounded-3xl border border-slate-200 bg-white text-left transition active:scale-[0.98]">
-      {image ? <img src={image} alt="" className="h-32 w-full object-cover" /> : <div className="flex h-32 items-center justify-center bg-blue-50"><Icon className="h-9 w-9 text-blue-600" /></div>}
-      <div className="p-4"><strong className="block text-sm text-slate-900">{title}</strong><span className="mt-1 block text-xs text-slate-500">{subtitle}</span></div>
+    <button type="button" onClick={onClick} className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition active:scale-[0.98]">
+      {image ? (
+        <div className="flex h-24 items-center justify-center bg-slate-100 p-2">
+          <img src={image} alt={`${title} selecionada`} className="h-full w-full object-contain" />
+        </div>
+      ) : (
+        <div className="flex h-24 items-center justify-center bg-blue-50"><Icon className="h-8 w-8 text-blue-600" /></div>
+      )}
+      <div className="px-3 py-2.5"><strong className="block text-sm text-slate-900">{title}</strong><span className="mt-0.5 block text-xs text-slate-500">{subtitle}</span></div>
     </button>
   );
 }

@@ -5,7 +5,7 @@ import { config } from "./config.mjs";
 import { createId, nowIso } from "./security.mjs";
 
 const FCM_AUTH_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
-const FCM_CHANNEL_ID = "worqo-general-v3-sound";
+const FCM_CHANNEL_ID = "worko-general-v5-external";
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60_000;
 const TRANSIENT_RETRY_DELAYS_MS = [750, 2_000];
 const METADATA_TOKEN_ENDPOINT =

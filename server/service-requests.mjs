@@ -83,6 +83,8 @@ const chatSelection = `
     service_requests.category AS service_category,
     service_requests.description AS service_description,
     service_requests.status AS service_status,
+    service_requests.asaas_payment_status AS payment_status,
+    service_requests.asaas_payment_received_at AS payment_received_at,
     requester.full_name AS requester_name,
     requester.avatar AS requester_avatar,
     requester.last_active_at AS requester_last_active_at,
@@ -245,10 +247,25 @@ const selectServiceChatsByUser = db.prepare(
   `
     ${chatSelection}
     WHERE (
-      (service_chats.requester_user_id = ? AND service_chats.requester_archived_at IS NULL)
-      OR (service_chats.worker_user_id = ? AND service_chats.worker_archived_at IS NULL)
+      (
+        service_chats.requester_user_id = ?
+        AND (
+          service_chats.requester_archived_at IS NULL
+          OR service_requests.asaas_payment_received_at IS NOT NULL
+        )
+      )
+      OR (
+        service_chats.worker_user_id = ?
+        AND (
+          service_chats.worker_archived_at IS NULL
+          OR service_requests.asaas_payment_received_at IS NOT NULL
+        )
+      )
     )
-      AND service_requests.status <> 'cancelled'
+      AND (
+        service_requests.status <> 'cancelled'
+        OR service_requests.asaas_payment_received_at IS NOT NULL
+      )
     ORDER BY service_chats.updated_at DESC
   `
 );
@@ -507,18 +524,6 @@ const lockServiceChatByRequestIdStatement = db.prepare(
       worker_archived_at = NULL,
       updated_at = ?
     WHERE service_request_id = ?
-  `
-);
-
-const reopenServiceChatStatement = db.prepare(
-  `
-    UPDATE service_chats
-    SET
-      reopened_at = ?,
-      requester_archived_at = NULL,
-      worker_archived_at = NULL,
-      updated_at = ?
-    WHERE id = ?
   `
 );
 
@@ -1488,6 +1493,18 @@ function mapServiceChat(row, currentUserId) {
       messageRow.sender_user_id !== currentUserId &&
       (!currentUserSeenAt || messageRow.created_at > currentUserSeenAt)
   ).length;
+  const normalizedPaymentStatus = String(row.payment_status ?? "").toUpperCase();
+  const wasPaid = Boolean(
+    row.payment_received_at ||
+      [
+        "CONFIRMED",
+        "RECEIVED",
+        "REFUNDED",
+        "PARTIALLY_REFUNDED",
+        "REFUND_REQUESTED",
+      ].some((status) => normalizedPaymentStatus.includes(status))
+  );
+  const isArchived = wasPaid && ["completed", "cancelled"].includes(row.service_status);
 
   return {
     id: row.id,
@@ -1505,7 +1522,9 @@ function mapServiceChat(row, currentUserId) {
     serviceType: row.service_category,
     servicePreview: row.service_description,
     serviceStatus: row.service_status ?? null,
-    isLocked: Boolean(row.locked_at && (!row.reopened_at || row.reopened_at < row.locked_at)),
+    isArchived,
+    wasPaid,
+    isLocked: Boolean(isArchived || row.locked_at),
   };
 }
 
@@ -2225,7 +2244,17 @@ export function sendServiceChatMessageForUser(userId, chatId, payload) {
     throw new HttpError(404, "Conversa não encontrada.");
   }
 
-  if (chatRow.locked_at && (!chatRow.reopened_at || chatRow.reopened_at < chatRow.locked_at)) {
+  const normalizedPaymentStatus = String(chatRow.payment_status ?? "").toUpperCase();
+  const isPaidFinishedChat =
+    ["completed", "cancelled"].includes(chatRow.service_status) &&
+    Boolean(
+      chatRow.payment_received_at ||
+        ["CONFIRMED", "RECEIVED", "REFUNDED", "PARTIALLY_REFUNDED", "REFUND_REQUESTED"].some(
+          (status) => normalizedPaymentStatus.includes(status)
+        )
+    );
+
+  if (chatRow.locked_at || isPaidFinishedChat) {
     throw new HttpError(
       409,
       "Este chat foi bloqueado após a conclusão do serviço. Entre em contato novamente para continuar."
@@ -2281,60 +2310,10 @@ export function reopenServiceChatForUser(userId, chatId) {
     throw new HttpError(404, "Conversa não encontrada.");
   }
 
-  if (chatRow.service_status !== "completed") {
-    throw new HttpError(409, "Este chat não precisa ser reaberto.");
-  }
-
-  const isLocked = Boolean(
-    chatRow.locked_at && (!chatRow.reopened_at || chatRow.reopened_at < chatRow.locked_at)
+  throw new HttpError(
+    410,
+    "Conversas encerradas não podem ser reabertas. Inicie um novo atendimento para criar um novo chat."
   );
-
-  if (!isLocked) {
-    return getServiceChatForUser(userId, chatId);
-  }
-
-  const timestamp = nowIso();
-  const senderIsRequester = chatRow.requester_user_id === userId;
-  const recipientUserId = senderIsRequester
-    ? chatRow.worker_user_id
-    : chatRow.requester_user_id;
-  const senderName = senderIsRequester
-    ? chatRow.requester_name
-    : chatRow.worker_name;
-  const senderAvatar = senderIsRequester
-    ? chatRow.requester_avatar
-    : chatRow.worker_avatar;
-
-  db.exec("BEGIN");
-
-  try {
-    reopenServiceChatStatement.run(timestamp, timestamp, chatId);
-    insertServiceChatMessageStatement.run(
-      createId(),
-      chatId,
-      userId,
-      "Quero entrar em contato novamente.",
-      "text",
-      null,
-      timestamp
-    );
-    createUserNotification(
-      recipientUserId,
-      "chat-message",
-      `${getNotificationFirstName(senderName)} quer conversar novamente.`,
-      {
-        title: getNotificationFirstName(senderName),
-        avatar: senderAvatar ?? null,
-        chatId,
-      }
-    );
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-
-  return getServiceChatForUser(userId, chatId);
 }
 
 export async function cancelServiceRequestForUser(userId, requestId) {

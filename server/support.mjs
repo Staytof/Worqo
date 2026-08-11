@@ -237,7 +237,7 @@ function notifyRequesterAboutSupportReply(ticket, message) {
     {
       title: "Resposta do SAC",
       ticketId: ticket.id,
-      path: "/app/profile/support",
+      path: `/app/profile/support/${ticket.id}`,
     }
   );
 }

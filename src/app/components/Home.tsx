@@ -52,7 +52,12 @@ import type {
   ServicePin,
   UserProfile,
 } from "../types";
-import { getInitials } from "../utils/helpers";
+import {
+  formatCurrencyAmount,
+  formatCurrencyInput,
+  getInitials,
+  parseCurrencyValue,
+} from "../utils/helpers";
 import { ActiveRequestSheet } from "./service/ActiveRequestSheet";
 import { PublicProfileModal } from "./profile/PublicProfileModal";
 import { VerifiedBadge } from "./ui/verified-badge";
@@ -1261,19 +1266,21 @@ function getCategoryActionClasses(type: PinType) {
 }
 
 function getClientCategoryCardClasses(type: PinType, isActive: boolean) {
-  if (!isActive) {
-    return "bg-neutral-100 text-neutral-500 active:bg-neutral-200";
-  }
-
   if (type === "Conserto") {
-    return "bg-red-500 text-white";
+    return isActive
+      ? "bg-blue-600 text-white shadow-[0_8px_20px_rgba(37,99,235,0.22)]"
+      : "bg-blue-50 text-blue-600 active:bg-blue-100";
   }
 
   if (type === "Limpeza") {
-    return "bg-amber-400 text-white";
+    return isActive
+      ? "bg-emerald-500 text-white shadow-[0_8px_20px_rgba(16,185,129,0.22)]"
+      : "bg-emerald-50 text-emerald-600 active:bg-emerald-100";
   }
 
-  return "bg-emerald-500 text-white";
+  return isActive
+    ? "bg-amber-500 text-white shadow-[0_8px_20px_rgba(245,158,11,0.22)]"
+    : "bg-amber-50 text-amber-600 active:bg-amber-100";
 }
 
 function buildFallbackWorkerProfile(
@@ -2059,10 +2066,13 @@ function ClientHome() {
   const {
     state: { activeServiceRequest, posts, user },
     createServiceRequest,
+    listCompletedServiceRequests,
     openChatFromPost,
   } = useApp();
   const [category, setCategory] = useState<PinType>("Conserto");
   const [description, setDescription] = useState("");
+  const [providerSearch, setProviderSearch] = useState("");
+  const [recentServices, setRecentServices] = useState<ActiveServiceRequest[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2139,8 +2149,50 @@ function ClientHome() {
         return [{ post, distanceKm, distanceLabel: formatDistanceLabel(distanceKm) }];
       })
       .sort((left, right) => left.distanceKm - right.distanceKm)
-      .slice(0, 4);
+      .slice(0, 12);
   }, [clientCoords, posts]);
+
+  const visiblePromotions = useMemo(() => {
+    const normalizedSearch = providerSearch.trim().toLocaleLowerCase("pt-BR");
+
+    return nearbyPromotions
+      .filter(({ post }) => post.category === category)
+      .filter(({ post }) => {
+        if (!normalizedSearch) {
+          return true;
+        }
+
+        return [post.user, post.profession, post.experience, post.content]
+          .filter(Boolean)
+          .some((value) =>
+            String(value).toLocaleLowerCase("pt-BR").includes(normalizedSearch)
+          );
+      })
+      .sort((left, right) => {
+        const ratingDifference = (right.post.averageRating ?? 0) - (left.post.averageRating ?? 0);
+
+        if (ratingDifference !== 0) {
+          return ratingDifference;
+        }
+
+        return left.distanceKm - right.distanceKm;
+      })
+      .slice(0, 8);
+  }, [category, nearbyPromotions, providerSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void listCompletedServiceRequests().then((result) => {
+      if (!cancelled && result.ok) {
+        setRecentServices((result.requests ?? []).slice(0, 2));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleOpenPromotionChat = async (postId: string) => {
     if (isOpeningPromotionChat) {
@@ -2315,6 +2367,17 @@ function ClientHome() {
             </>
           ) : null}
 
+          <label className="mb-5 flex items-center gap-3 rounded-[16px] border border-neutral-200 bg-neutral-100 px-4 py-3.5">
+            <Search className="h-4 w-4 shrink-0 text-neutral-400" />
+            <input
+              type="search"
+              value={providerSearch}
+              onChange={(event) => setProviderSearch(event.target.value)}
+              placeholder="Buscar serviços ou profissionais..."
+              className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-neutral-800 outline-none placeholder:text-neutral-400"
+            />
+          </label>
+
           <form onSubmit={(event) => void handleSubmit(event)} className="space-y-5">
             <div className="grid grid-cols-3 gap-2">
               {requestComposerCategories.map((item) => {
@@ -2388,6 +2451,21 @@ function ClientHome() {
               </button>
             )}
           </form>
+
+          <div className="mt-5 grid grid-cols-3 divide-x divide-neutral-200 rounded-2xl bg-white px-2 py-3 shadow-sm">
+            <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-neutral-700">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Verificados
+            </div>
+            <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-neutral-700">
+              <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+              Avaliados
+            </div>
+            <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-neutral-700">
+              <Clock3 className="h-4 w-4 text-blue-600" />
+              Rápido
+            </div>
+          </div>
         </section>
 
         {hasActiveRequesterService ? (
@@ -2423,65 +2501,144 @@ function ClientHome() {
           </div>
         ) : null}
 
-        {nearbyPromotions.length > 0 ? (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-base font-black text-neutral-950">Prestadores(as) perto de você</h2>
-                <p className="mt-1 text-xs font-semibold text-neutral-500">
-                  Até {PROVIDER_PROMOTION_RADIUS_KM} km da sua localização.
-                </p>
-              </div>
-              <Megaphone className="h-5 w-5 shrink-0 text-blue-600" />
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-black text-neutral-950">Profissionais perto de você</h2>
+              <p className="mt-1 text-xs font-semibold text-neutral-500">
+                Sua localização exata permanece protegida.
+              </p>
             </div>
+            <MapPin className="h-5 w-5 text-blue-600" />
+          </div>
+          <ClientLocationPreviewClean />
+        </section>
 
-            <div className="space-y-3">
-              {nearbyPromotions.map(({ post, distanceLabel }) => (
-                <article
-                  key={post.id}
-                  className="rounded-[22px] border border-neutral-200 bg-white p-4"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-600 text-sm font-black text-white">
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-base font-black text-neutral-950">Destaques perto de você</h2>
+              <p className="mt-1 text-xs font-semibold text-neutral-500">
+                Profissionais em até {PROVIDER_PROMOTION_RADIUS_KM} km, filtrados por categoria.
+              </p>
+            </div>
+            <Megaphone className="h-5 w-5 shrink-0 text-blue-600" />
+          </div>
+
+          {visiblePromotions.length > 0 ? (
+            <div className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {visiblePromotions.map(({ post, distanceLabel }) => {
+                const rating = post.averageRating ?? null;
+                const hourlyRate = post.hourlyRateCents
+                  ? `${formatCurrencyAmount(post.hourlyRateCents / 100)}/h`
+                  : "Valor a combinar";
+
+                return (
+                  <article
+                    key={post.id}
+                    className="w-[168px] shrink-0 snap-start rounded-[20px] border border-neutral-100 bg-white p-4 shadow-sm"
+                  >
+                    <div className="relative mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-blue-600 text-base font-black text-white ring-4 ring-blue-50">
                       {post.avatar ? (
                         <img src={post.avatar} alt={post.user} className="h-full w-full object-cover" />
                       ) : (
                         getInitials(post.user)
                       )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h3 className="truncate text-sm font-black text-neutral-950">{post.user}</h3>
-                          <p className="mt-0.5 truncate text-xs font-bold text-blue-600">
-                            {post.profession}
-                          </p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-bold text-neutral-600">
-                          {distanceLabel}
+                      {post.isVerified ? (
+                        <span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-blue-600">
+                          <ShieldCheck className="h-3 w-3 text-white" />
                         </span>
-                      </div>
-                      <p className="mt-3 line-clamp-2 text-xs font-semibold leading-relaxed text-neutral-600">
-                        {post.experience || post.content}
-                      </p>
+                      ) : null}
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleOpenPromotionChat(post.id)}
-                    disabled={isOpeningPromotionChat === post.id}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isOpeningPromotionChat === post.id ? "Abrindo..." : "Abrir conversa"}
-                    <SendHorizontal className="h-4 w-4" />
-                  </button>
-                </article>
+
+                    <h3 className="mt-3 truncate text-center text-sm font-black text-neutral-950">
+                      {post.user}
+                    </h3>
+                    <p className="mt-0.5 truncate text-center text-[11px] font-bold text-neutral-500">
+                      {post.profession || post.category}
+                    </p>
+
+                    <div className="mt-2 flex items-center justify-center gap-1 text-[11px]">
+                      <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                      <span className="font-black text-neutral-800">
+                        {rating === null ? "Novo" : rating.toFixed(1).replace(".", ",")}
+                      </span>
+                      {post.reviewsCount ? (
+                        <span className="text-neutral-400">({post.reviewsCount})</span>
+                      ) : null}
+                    </div>
+
+                    <p className="mt-1 text-center text-[10px] font-semibold text-neutral-400">
+                      {post.completedServicesCount ?? 0} serviços · {distanceLabel}
+                    </p>
+                    <p className="mt-2 text-center text-[13px] font-black text-blue-600">
+                      {hourlyRate}
+                    </p>
+                    <p className="mt-2 line-clamp-2 min-h-8 text-center text-[10px] font-semibold leading-4 text-neutral-500">
+                      {post.experience || post.content}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenPromotionChat(post.id)}
+                      disabled={isOpeningPromotionChat === post.id}
+                      className="mt-3 flex w-full items-center justify-center rounded-xl bg-blue-50 px-3 py-2 text-[11px] font-black text-blue-700 transition active:scale-[0.98] disabled:opacity-60"
+                    >
+                      {isOpeningPromotionChat === post.id ? "Abrindo..." : "Conversar"}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-[20px] border border-dashed border-neutral-200 bg-white px-5 py-6 text-center">
+              <Search className="mx-auto h-5 w-5 text-neutral-300" />
+              <p className="mt-2 text-xs font-bold text-neutral-500">
+                Nenhum profissional dessa categoria foi encontrado perto de você agora.
+              </p>
+            </div>
+          )}
+        </section>
+
+        {recentServices.length > 0 ? (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-base font-black text-neutral-950">Serviços recentes</h2>
+              <button
+                type="button"
+                onClick={() => navigate("/app/orders")}
+                className="text-xs font-black text-blue-600"
+              >
+                Ver todos
+              </button>
+            </div>
+            <div className="space-y-2">
+              {recentServices.map((service) => (
+                <button
+                  key={service.id}
+                  type="button"
+                  onClick={() => navigate("/app/orders")}
+                  className="flex w-full items-center gap-3 rounded-[16px] bg-white p-3 text-left shadow-sm"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                    <Wrench className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-black text-neutral-900">
+                      {service.details?.title || service.description}
+                    </span>
+                    <span className="mt-0.5 block text-[11px] font-semibold text-neutral-400">
+                      {service.createdAtLabel}
+                    </span>
+                  </span>
+                  <span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">
+                    Concluído
+                  </span>
+                </button>
               ))}
             </div>
           </section>
         ) : null}
-
-        <ClientLocationPreviewClean />
       </div>
     </motion.div>
   );
@@ -2551,6 +2708,7 @@ function ProviderHome() {
     getServiceProfessions(user)[0] ?? ""
   );
   const [promotionDescription, setPromotionDescription] = useState("");
+  const [promotionHourlyRate, setPromotionHourlyRate] = useState("");
   const [promotionDurationDays, setPromotionDurationDays] = useState<(typeof PROMOTION_DURATION_OPTIONS)[number]>(1);
   const [isPromotionProfessionOpen, setIsPromotionProfessionOpen] = useState(false);
   const [isPromotionDurationOpen, setIsPromotionDurationOpen] = useState(false);
@@ -3978,8 +4136,17 @@ function ProviderHome() {
       return;
     }
 
+    if (hasLiveRequest) {
+      setMapSyncFeedback({
+        tone: "error",
+        message: "Conclua o atendimento atual antes de divulgar outro serviço.",
+      });
+      return;
+    }
+
     setPromotionProfession(serviceProfessions[0] ?? "");
     setPromotionDescription("");
+    setPromotionHourlyRate("");
     setPromotionDurationDays(3);
     setIsPromotionComposerOpen(true);
   };
@@ -4013,8 +4180,14 @@ function ProviderHome() {
       return;
     }
 
+    if (hasLiveRequest) {
+      setPromotionError("Conclua o atendimento atual antes de divulgar outro serviço.");
+      return;
+    }
+
     const normalizedDescription = promotionDescription.trim();
     const normalizedProfession = promotionProfession.trim();
+    const hourlyRateCents = Math.round(parseCurrencyValue(promotionHourlyRate) * 100);
 
     if (activeOwnPromotion) {
       setPromotionError("Remova a divulgação atual antes de criar outra.");
@@ -4040,6 +4213,11 @@ function ProviderHome() {
 
     if (normalizedDescription.length > PROMOTION_DESCRIPTION_MAX_LENGTH) {
       setPromotionError("Resuma sua divulgação em até 160 caracteres.");
+      return;
+    }
+
+    if (!Number.isInteger(hourlyRateCents) || hourlyRateCents <= 0) {
+      setPromotionError("Informe quanto você cobra por hora.");
       return;
     }
 
@@ -4083,6 +4261,7 @@ function ProviderHome() {
       content: normalizedDescription,
       profession: normalizedProfession,
       experience: normalizedDescription,
+      hourlyRateCents,
       durationDays: promotionDurationDays,
       latitude: coords.lat,
       longitude: coords.lng,
@@ -4096,6 +4275,7 @@ function ProviderHome() {
     }
 
     setPromotionDescription("");
+    setPromotionHourlyRate("");
     setPromotionCategory(derivedCategory);
     setPromotionError("");
     if (result.post) {
@@ -4649,7 +4829,7 @@ function ProviderHome() {
         <div className="absolute bottom-28 left-4 right-20 z-40 grid max-w-sm grid-cols-2 gap-2 sm:left-1/2 sm:right-auto sm:w-full sm:-translate-x-1/2">
           <button
             type="button"
-            onClick={() => setIsCurrentServiceInfoOpen(true)}
+            onClick={() => navigate("/app/current-service")}
             className="inline-flex h-14 min-w-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 shadow-[0_14px_34px_rgba(15,23,42,0.18)] transition active:scale-[0.98]"
             aria-label="Ver informações do atendimento atual"
           >
@@ -4912,7 +5092,9 @@ function ProviderHome() {
         <button
           type="button"
           onClick={handleOpenPromotionAction}
-          className="absolute bottom-28 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500 bg-blue-600 text-white shadow-[0_18px_60px_rgba(37,99,235,0.35)] backdrop-blur-xl transition hover:bg-blue-700"
+          disabled={hasLiveRequest && !activeOwnPromotion}
+          title={hasLiveRequest && !activeOwnPromotion ? "Conclua o atendimento atual para divulgar" : undefined}
+          className="absolute bottom-28 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full border border-blue-500 bg-blue-600 text-white shadow-[0_18px_60px_rgba(37,99,235,0.35)] backdrop-blur-xl transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300 disabled:shadow-none"
           aria-label={activeOwnPromotion ? "Ver divulgação ativa" : "Criar divulgação"}
         >
           {activeOwnPromotion ? (
@@ -5007,6 +5189,17 @@ function ProviderHome() {
                   </p>
                   <p className="mt-2 text-sm font-semibold leading-relaxed text-neutral-700">
                     {activeOwnPromotion.experience || activeOwnPromotion.content}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-blue-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-500">
+                    Valor por hora
+                  </p>
+                  <p className="mt-2 text-base font-black text-blue-700">
+                    {activeOwnPromotion.hourlyRateCents
+                      ? `${formatCurrencyAmount(activeOwnPromotion.hourlyRateCents / 100)}/hora`
+                      : "Não informado"}
                   </p>
                 </div>
 
@@ -5124,6 +5317,32 @@ function ProviderHome() {
                     <X className="h-4 w-4" strokeWidth={2.5} />
                   </button>
                 </div>
+              </div>
+
+              <div className="h-px bg-neutral-100" />
+
+              <div className="px-6 py-5">
+                <label className="mb-3 block text-[10px] font-black uppercase tracking-[0.18em] text-neutral-400">
+                  Quanto você cobra por hora
+                </label>
+                <div className="flex items-center rounded-[18px] bg-neutral-100 px-4 py-1">
+                  <CircleDollarSign className="h-5 w-5 shrink-0 text-blue-600" />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={promotionHourlyRate}
+                    onChange={(event) => {
+                      setPromotionHourlyRate(formatCurrencyInput(event.target.value));
+                      setPromotionError("");
+                    }}
+                    placeholder="R$ 0,00"
+                    className="min-w-0 flex-1 bg-transparent px-3 py-4 text-[15px] font-black text-neutral-800 outline-none placeholder:text-neutral-300"
+                  />
+                  <span className="text-xs font-bold text-neutral-400">por hora</span>
+                </div>
+                <p className="mt-2 text-xs font-semibold leading-relaxed text-neutral-500">
+                  Esse valor aparecerá para clientes próximos na sua divulgação.
+                </p>
               </div>
 
               <div className="h-px bg-neutral-100" />
@@ -5277,7 +5496,8 @@ function ProviderHome() {
                   disabled={
                     isPublishingPromotion ||
                     !canCreatePromotion ||
-                    !promotionProfession.trim()
+                    !promotionProfession.trim() ||
+                    parseCurrencyValue(promotionHourlyRate) <= 0
                   }
                   className="flex w-full items-center justify-center gap-2.5 rounded-2xl bg-blue-600 py-4 text-[15px] font-black tracking-wide text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400"
                 >

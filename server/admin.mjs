@@ -67,6 +67,77 @@ const selectTimelineByRequestIdStatement = db.prepare(`
   ORDER BY created_at ASC
 `);
 
+const selectActiveServiceChatsStatement = db.prepare(`
+  SELECT
+    service_chats.id,
+    service_chats.service_request_id,
+    service_chats.created_at,
+    service_chats.updated_at,
+    service_requests.category,
+    service_requests.description,
+    service_requests.status,
+    requester.full_name AS requester_name,
+    requester.email AS requester_email,
+    worker.full_name AS worker_name,
+    worker.email AS worker_email
+  FROM service_chats
+  INNER JOIN service_requests ON service_requests.id = service_chats.service_request_id
+  INNER JOIN users AS requester ON requester.id = service_chats.requester_user_id
+  INNER JOIN users AS worker ON worker.id = service_chats.worker_user_id
+  WHERE service_chats.locked_at IS NULL
+    AND service_requests.status IN ('assigned', 'chatting', 'details', 'waiting-worker', 'payment', 'confirmed')
+  ORDER BY service_chats.updated_at DESC
+`);
+
+const selectActiveCommunityChatsStatement = db.prepare(`
+  SELECT
+    community_post_chats.id,
+    NULL AS service_request_id,
+    community_post_chats.created_at,
+    community_post_chats.updated_at,
+    community_posts.category,
+    community_posts.content AS description,
+    'conversation' AS status,
+    contact.full_name AS requester_name,
+    contact.email AS requester_email,
+    author.full_name AS worker_name,
+    author.email AS worker_email
+  FROM community_post_chats
+  INNER JOIN community_posts ON community_posts.id = community_post_chats.post_id
+  INNER JOIN users AS contact ON contact.id = community_post_chats.contact_user_id
+  INNER JOIN users AS author ON author.id = community_post_chats.post_author_user_id
+  WHERE community_posts.archived_at IS NULL
+  ORDER BY community_post_chats.updated_at DESC
+`);
+
+const selectAdminServiceChatMessagesStatement = db.prepare(`
+  SELECT
+    service_chat_messages.id,
+    service_chat_messages.body,
+    service_chat_messages.message_type,
+    service_chat_messages.image_url,
+    service_chat_messages.created_at,
+    users.full_name AS sender_name
+  FROM service_chat_messages
+  INNER JOIN users ON users.id = service_chat_messages.sender_user_id
+  WHERE service_chat_messages.chat_id = ?
+  ORDER BY service_chat_messages.created_at ASC
+`);
+
+const selectAdminCommunityChatMessagesStatement = db.prepare(`
+  SELECT
+    community_post_chat_messages.id,
+    community_post_chat_messages.body,
+    community_post_chat_messages.message_type,
+    community_post_chat_messages.image_url,
+    community_post_chat_messages.created_at,
+    users.full_name AS sender_name
+  FROM community_post_chat_messages
+  INNER JOIN users ON users.id = community_post_chat_messages.sender_user_id
+  WHERE community_post_chat_messages.chat_id = ?
+  ORDER BY community_post_chat_messages.created_at ASC
+`);
+
 const selectAdminUserRowsStatement = db.prepare(`
   SELECT
     users.id,
@@ -117,6 +188,7 @@ const selectAdminUserRowsStatement = db.prepare(`
         AND status IN ('searching', 'assigned', 'chatting', 'details', 'waiting-worker', 'payment', 'confirmed')
     ) AS active_service_flows
   FROM users
+  WHERE users.deleted_at IS NULL
   ORDER BY users.created_at DESC, users.updated_at DESC
 `);
 
@@ -487,6 +559,36 @@ function buildOverview(requestRows, withdrawals, users, supportOverviewRow, prov
   };
 }
 
+function mapAdminActiveChat(row, kind) {
+  const messages = (kind === "service"
+    ? selectAdminServiceChatMessagesStatement
+    : selectAdminCommunityChatMessagesStatement
+  ).all(row.id);
+
+  return {
+    id: row.id,
+    kind,
+    serviceRequestId: row.service_request_id ?? null,
+    category: row.category ?? "Atendimento",
+    description: row.description ?? "",
+    status: row.status ?? "conversation",
+    requesterName: row.requester_name ?? "Cliente",
+    requesterEmail: row.requester_email ?? "",
+    workerName: row.worker_name ?? "Prestador(a)",
+    workerEmail: row.worker_email ?? "",
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+    messages: messages.map((message) => ({
+      id: message.id,
+      senderName: message.sender_name ?? "Usuário(a)",
+      body: message.body ?? "",
+      messageType: message.message_type === "image" ? "image" : "text",
+      imageUrl: message.image_url ?? null,
+      createdAt: message.created_at ?? "",
+    })),
+  };
+}
+
 export function getAdminDashboard({ includeProviderDocuments = false } = {}) {
   const requestRows = selectAdminRequestRowsStatement.all();
   const requestStatusCounts = selectRequestStatusCountsStatement.all().map((row) => ({
@@ -537,6 +639,10 @@ export function getAdminDashboard({ includeProviderDocuments = false } = {}) {
       dispute: mapDispute(row),
       timeline: selectTimelineByRequestIdStatement.all(row.id).map(mapTimelineEvent),
     })),
+    activeChats: [
+      ...selectActiveServiceChatsStatement.all().map((row) => mapAdminActiveChat(row, "service")),
+      ...selectActiveCommunityChatsStatement.all().map((row) => mapAdminActiveChat(row, "community")),
+    ].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
     users,
     providerVerifications,
     supportOverview: {

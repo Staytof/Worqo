@@ -408,9 +408,9 @@ export function AdminSupportDesk({ sessionToken }: AdminSupportDeskProps) {
                 <div ref={endRef} />
               </div>
 
-              <form onSubmit={handleSendReply} className="mt-4 pt-4">
-                <div className="rounded-[24px] border border-slate-700 bg-slate-900 px-4 py-3">
-                  <textarea
+              <form onSubmit={handleSendReply} className="mt-4 border-t border-slate-800 pt-4">
+                <div className="flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2">
+                  <input
                     value={replyByTicket[selectedTicket.id] ?? ""}
                     onChange={(event) =>
                       setReplyByTicket((current) => ({
@@ -418,23 +418,19 @@ export function AdminSupportDesk({ sessionToken }: AdminSupportDeskProps) {
                         [selectedTicket.id]: event.target.value.slice(0, 1600),
                       }))
                     }
-                    rows={4}
-                    placeholder="Responda o cliente do SAC por aqui."
-                    className="min-h-[110px] w-full resize-none bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    placeholder="Mensagem"
+                    className="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
                   />
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <button
                     type="submit"
                     disabled={
                       isSendingForTicket === selectedTicket.id ||
                       !String(replyByTicket[selectedTicket.id] ?? "").trim()
                     }
-                    className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-700"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-700"
+                    aria-label="Enviar resposta"
                   >
                     <SendHorizontal className="h-4 w-4" />
-                    {isSendingForTicket === selectedTicket.id ? "Enviando..." : "Responder"}
                   </button>
                 </div>
               </form>

@@ -38,6 +38,7 @@ const securityChallengeDurationMs = 1000 * 60 * 10;
 const securityChallengeMaxAttempts = 5;
 const securityChallengeResendWindowMs = 30_000;
 const oauthStateDurationMs = 1000 * 60 * 10;
+const oauthExchangeDurationMs = 1000 * 60 * 2;
 const userActivityTouchWindowMs = 1000 * 60;
 const providerVerificationStatuses = new Set([
   "not_required",
@@ -1047,6 +1048,7 @@ function consumeGoogleOAuthState(state) {
   return {
     rememberMe: Boolean(stateRow.remember_me),
     returnTo: stateRow.return_to || "",
+    flowVersion: Number(stateRow.flow_version) || 1,
     deviceId: stateRow.device_id || "",
     deviceLabel: stateRow.device_label || "",
     devicePlatform: stateRow.device_platform || "",
@@ -1054,6 +1056,70 @@ function consumeGoogleOAuthState(state) {
     loginIp: stateRow.login_ip || "",
     loginLocation: stateRow.login_location || "",
   };
+}
+
+export function createGoogleOAuthExchange(result) {
+  const exchange = createSessionToken();
+  const timestamp = nowIso();
+  const expiresAt = new Date(Date.now() + oauthExchangeDurationMs).toISOString();
+  const { returnTo = "", flowVersion = 1, ...exchangeResult } = result ?? {};
+
+  db.prepare(
+    `
+      INSERT INTO oauth_login_results (
+        id,
+        exchange_hash,
+        result_json,
+        expires_at,
+        consumed_at,
+        created_at
+      ) VALUES (?, ?, ?, ?, NULL, ?)
+    `
+  ).run(
+    createId(),
+    hashCode(exchange),
+    JSON.stringify(exchangeResult),
+    expiresAt,
+    timestamp
+  );
+
+  return { exchange, returnTo, flowVersion };
+}
+
+export function cancelGoogleOAuthLogin(state) {
+  const { returnTo, flowVersion } = consumeGoogleOAuthState(state);
+  return { returnTo, flowVersion };
+}
+
+export function consumeGoogleOAuthExchange(exchange) {
+  const exchangeHash = hashCode(String(exchange ?? ""));
+  const resultRow = db
+    .prepare(
+      `
+        SELECT *
+        FROM oauth_login_results
+        WHERE exchange_hash = ?
+          AND consumed_at IS NULL
+        LIMIT 1
+      `
+    )
+    .get(exchangeHash);
+
+  if (!resultRow) {
+    throw new HttpError(400, "Retorno do Google inválido ou já utilizado. Tente novamente.");
+  }
+
+  db.prepare("DELETE FROM oauth_login_results WHERE id = ?").run(resultRow.id);
+
+  if (new Date(resultRow.expires_at).getTime() < Date.now()) {
+    throw new HttpError(400, "O retorno do Google expirou. Tente novamente.");
+  }
+
+  try {
+    return JSON.parse(resultRow.result_json);
+  } catch {
+    throw new HttpError(500, "Não conseguimos recuperar o retorno seguro do Google.");
+  }
 }
 
 async function requestGoogleToken(code) {
@@ -1329,6 +1395,7 @@ export function createGoogleOAuthStartUrl({
   timezone = "",
   loginIp = "",
   loginLocation = "",
+  flowVersion = 1,
 } = {}) {
   ensureGoogleOAuthConfigured();
 
@@ -1350,9 +1417,10 @@ export function createGoogleOAuthStartUrl({
         timezone,
         login_ip,
         login_location,
+        flow_version,
         expires_at,
         created_at
-      ) VALUES (?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
   ).run(
     createId(),
@@ -1365,6 +1433,7 @@ export function createGoogleOAuthStartUrl({
     normalizeSessionText(timezone, 100),
     normalizeSessionText(loginIp, 100),
     normalizeSessionText(loginLocation, 180),
+    Number(flowVersion) >= 2 ? 2 : 1,
     expiresAt,
     nowIso()
   );
@@ -1390,6 +1459,7 @@ export async function completeGoogleOAuthLogin({ code, state }) {
   const {
     rememberMe,
     returnTo,
+    flowVersion,
     deviceId,
     deviceLabel,
     devicePlatform,
@@ -1410,6 +1480,7 @@ export async function completeGoogleOAuthLogin({ code, state }) {
       user: mapUser(user),
       rememberMe,
       returnTo,
+      flowVersion,
     };
   }
 
@@ -1427,6 +1498,7 @@ export async function completeGoogleOAuthLogin({ code, state }) {
     ...session,
     rememberMe,
     returnTo,
+    flowVersion,
   };
 }
 
@@ -2072,7 +2144,7 @@ export function getPublicUserProfile(targetUserId) {
   return mapPublicUser(user);
 }
 
-export function deleteUserAccount(userId) {
+export function deleteUserAccount(userId, { reason = "user-deleted" } = {}) {
   const user = getUserById(userId);
 
   if (!user || user.deleted_at) {
@@ -2103,7 +2175,7 @@ export function deleteUserAccount(userId) {
     blockAccountEmailStatement.run(
       normalizeEmail(user.email),
       userId,
-      "user-deleted",
+      String(reason ?? "user-deleted").trim().slice(0, 80) || "user-deleted",
       timestamp
     );
     anonymizeServiceChatMessagesStatement.run(userId);

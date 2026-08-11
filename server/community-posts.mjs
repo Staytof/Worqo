@@ -9,6 +9,8 @@ const VALID_POST_TYPES = new Set(["offer", "request"]);
 const POST_CONTENT_MIN_LENGTH = 12;
 const POST_CONTENT_MAX_LENGTH = 160;
 const POST_PROFESSION_MAX_LENGTH = 80;
+const POST_HOURLY_RATE_MIN_CENTS = 1;
+const POST_HOURLY_RATE_MAX_CENTS = 10_000_000;
 const POST_DURATION_MIN_DAYS = 1;
 const POST_DURATION_MAX_DAYS = 5;
 const ONLINE_ACTIVITY_WINDOW_MS = 1000 * 60 * 5;
@@ -23,6 +25,22 @@ const communityPostSelection = `
     author.last_active_at AS author_last_active_at,
     author.cpf_verified_at AS author_cpf_verified_at,
     author.cpf_digits AS author_cpf_digits,
+    (
+      SELECT COUNT(*)
+      FROM service_requests AS completed_service
+      WHERE completed_service.worker_user_id = author.id
+        AND completed_service.status = 'completed'
+    ) AS author_completed_services_count,
+    (
+      SELECT AVG(service_reviews.rating)
+      FROM service_reviews
+      WHERE service_reviews.target_user_id = author.id
+    ) AS author_average_rating,
+    (
+      SELECT COUNT(*)
+      FROM service_reviews
+      WHERE service_reviews.target_user_id = author.id
+    ) AS author_reviews_count,
     current_chat.id AS current_chat_id
   FROM community_posts
   INNER JOIN users AS author ON author.id = community_posts.author_user_id
@@ -132,13 +150,14 @@ const insertCommunityPostStatement = db.prepare(`
     content,
     profession,
     experience,
+    hourly_rate_cents,
     duration_days,
     expires_at,
     latitude,
     longitude,
     created_at,
     updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertCommunityPostChatStatement = db.prepare(`
@@ -301,6 +320,20 @@ function ensurePromotionDurationDays(value) {
   }
 
   return durationDays;
+}
+
+function ensurePromotionHourlyRateCents(value) {
+  const hourlyRateCents = Number(value);
+
+  if (
+    !Number.isInteger(hourlyRateCents) ||
+    hourlyRateCents < POST_HOURLY_RATE_MIN_CENTS ||
+    hourlyRateCents > POST_HOURLY_RATE_MAX_CENTS
+  ) {
+    throw new HttpError(400, "Informe um valor por hora válido para publicar sua divulgação.");
+  }
+
+  return hourlyRateCents;
 }
 
 function ensurePromotionCoordinate(value, fieldName) {
@@ -501,6 +534,16 @@ function mapCommunityPost(row, viewerUserId) {
     content: row.content,
     profession: row.profession ?? "",
     experience: row.experience ?? row.content,
+    hourlyRateCents:
+      row.hourly_rate_cents === null || row.hourly_rate_cents === undefined
+        ? null
+        : Number(row.hourly_rate_cents),
+    completedServicesCount: Number(row.author_completed_services_count) || 0,
+    averageRating:
+      row.author_average_rating === null || row.author_average_rating === undefined
+        ? null
+        : Number(row.author_average_rating),
+    reviewsCount: Number(row.author_reviews_count) || 0,
     durationDays: row.duration_days ?? null,
     expiresAt: row.expires_at ?? null,
     latitude: row.latitude ?? null,
@@ -509,6 +552,7 @@ function mapCommunityPost(row, viewerUserId) {
     timeLabel: buildPostTimeLabel(row.created_at),
     distance: isOwnPost ? "Seu post" : "No mural",
     chatId: isOwnPost ? null : row.current_chat_id ?? null,
+    authorUserId: row.author_user_id,
     authorId: isOwnPost ? "me" : "community",
   };
 }
@@ -649,6 +693,8 @@ export function createCommunityPostForUser(user, payload) {
   const primaryProfession = Array.isArray(user.professions) ? user.professions[0] : "";
   const profession =
     postType === "offer" ? ensurePostProfession(payload?.profession, primaryProfession) : null;
+  const hourlyRateCents =
+    postType === "offer" ? ensurePromotionHourlyRateCents(payload?.hourlyRateCents) : null;
   const latitude =
     postType === "offer" ? ensurePromotionCoordinate(payload?.latitude, "localização") : null;
   const longitude =
@@ -662,6 +708,7 @@ export function createCommunityPostForUser(user, payload) {
     content,
     profession,
     content,
+    hourlyRateCents,
     durationDays,
     expiresAt,
     latitude,

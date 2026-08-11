@@ -192,6 +192,10 @@ export type Post = {
   content: string;
   profession?: string;
   experience?: string;
+  hourlyRateCents?: number | null;
+  completedServicesCount?: number;
+  averageRating?: number | null;
+  reviewsCount?: number;
   durationDays?: number;
   expiresAt?: string | null;
   latitude?: number | null;
@@ -200,6 +204,7 @@ export type Post = {
   timeLabel: string;
   distance: string;
   chatId: string | null;
+  authorUserId?: string | null;
   authorId: "community" | "me";
 };
 
@@ -265,6 +270,8 @@ export type ChatThread = {
   servicePreview?: string | null;
   serviceStatus?: ServiceRequestStatus | null;
   isLocked?: boolean;
+  isArchived?: boolean;
+  wasPaid?: boolean;
 };
 
 export type SupportTicketStatus = "waiting" | "active" | "closed";
@@ -405,6 +412,7 @@ export type PostComposerPayload = {
   content: string;
   profession?: string;
   experience?: string;
+  hourlyRateCents?: number;
   durationDays?: number;
   expiresAt?: string | null;
   latitude?: number | null;
@@ -617,6 +625,29 @@ export type AdminSupportOverview = {
   latestCustomerMessageAt: string | null;
 };
 
+export type AdminMonitoredChat = {
+  id: string;
+  kind: "service" | "community";
+  serviceRequestId: string | null;
+  category: string;
+  description: string;
+  status: string;
+  requesterName: string;
+  requesterEmail: string;
+  workerName: string;
+  workerEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: Array<{
+    id: string;
+    senderName: string;
+    body: string;
+    messageType: "text" | "image";
+    imageUrl: string | null;
+    createdAt: string;
+  }>;
+};
+
 export type AdminHealthSnapshot = {
   ok: boolean;
   service: string;
@@ -664,6 +695,7 @@ export type AdminDashboard = {
   overview: AdminOverview;
   requestStatusCounts: AdminRequestStatusCount[];
   requests: AdminServiceRequestRecord[];
+  activeChats: AdminMonitoredChat[];
   users: AdminUserRecord[];
   providerVerifications: AdminProviderVerificationRecord[];
   supportOverview: AdminSupportOverview;
